@@ -11,7 +11,7 @@ all: $(BINS)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 librbscsi.a: rbscsi.o
-	$(AR) $(ARFLAGS) -o $@ $^
+	$(AR) $(ARFLAGS) $@ $^
 
 clean:
 	rm -fr *.o $(BINS)

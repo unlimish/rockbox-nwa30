@@ -17,7 +17,7 @@
  * KIND, either express or implied.
  *
  ****************************************************************************/
-#define _XOPEN_SOURCE 500 /* for strdup */
+#define _XOPEN_SOURCE 700 /* for strdup */
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -465,11 +465,23 @@ static int create_upg(int argc, char **argv)
             upg_append(upg, buf, size);
     }
 
-    /* modify md5 file (if any) */
-    upg->files[1].data = realloc(upg->files[1].data, upg->files[1].size + md5_prepend_sz);
-    memmove(upg->files[1].data + md5_prepend_sz, upg->files[1].data, upg->files[1].size);
-    memcpy(upg->files[1].data, md5_prepend, md5_prepend_sz);
-    upg->files[1].size += md5_prepend_sz;
+    /* modify md5 file (if any): only if some files had a md5name attached,
+     * which also implies that there is a second file to hold the MD5s */
+    if(md5_prepend_sz > 0)
+    {
+        if(nr_files < 2)
+        {
+            upg_free(upg);
+            free(md5_prepend);
+            cprintf(GREY, "Cannot add MD5 sums without a second file\n");
+            return 1;
+        }
+        upg->files[1].data = realloc(upg->files[1].data, upg->files[1].size + md5_prepend_sz);
+        memmove(upg->files[1].data + md5_prepend_sz, upg->files[1].data, upg->files[1].size);
+        memcpy(upg->files[1].data, md5_prepend, md5_prepend_sz);
+        upg->files[1].size += md5_prepend_sz;
+    }
+    free(md5_prepend);
 
     size_t size = 0;
     void *buf = upg_write_memory(upg, g_key, g_sig, &size, NULL, generic_std_printf);

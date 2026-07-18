@@ -503,7 +503,7 @@ int main(int argc, char **argv)
             close(fileno(stderr));
             /* for now the only way we have to trigger USB mode it to run the OF */
             /* boot OF */
-            execvp("/usr/local/bin/SpiderApp.of", argv);
+            execvp(NWZ_OF_APP, argv);
             error_screen("Cannot boot OF");
             sleep(5 * HZ);
         }

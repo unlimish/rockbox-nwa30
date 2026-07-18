@@ -542,6 +542,8 @@ Lyre prototype 1 */
 #include "config/sonynwza10.h"
 #elif defined(SONY_NWA20)
 #include "config/sonynwa20.h"
+#elif defined(SONY_NWA30)
+#include "config/sonynwa30.h"
 #elif defined(SONY_NWZE470)
 #include "config/sonynwze470.h"
 #elif defined(SONY_NWZA860)

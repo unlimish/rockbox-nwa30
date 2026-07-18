@@ -24,8 +24,9 @@
 #include "config.h"
 
 /* The NWZ-A860 is completely different, it has a touchscreen and some but not
- * all keys of the other others */
-#if defined(SONY_NWZA860)
+ * all keys of the other others. The NW-A30 follows the same scheme
+ * (touchscreen + media keys only). */
+#if defined(SONY_NWZA860) || defined(SONY_NWA30)
 
 /* Main unit's buttons */
 #define BUTTON_BACK                 0x00000001 /* HOME */
@@ -54,6 +55,23 @@
 #define BUTTON_MAIN 0x7fff
 
 #define POWEROFF_BUTTON             BUTTON_BACK
+
+#if defined(SONY_NWA30)
+/* the NW-A30 reports keys as standard linux input events, handled by
+ * button-devinput.c which calls back into the target for the mapping */
+int button_map(int keycode);
+bool headphones_inserted(void);
+
+/* bit returned by button_map() while a finger is on the touchscreen, it is
+ * stripped from the bitmap by the driver (must not clash with real buttons) */
+#define BUTTON_TOUCH                0x00008000
+
+/* linux input code of the hold switch, tracked by button-devinput.c */
+#define BUTTON_HOLD_KEYCODE         35 /* KEY_H */
+
+/* provided by button-devinput.c: re-read the hold switch state */
+void button_reload_hold_status(void);
+#endif
 
 #else /* SONY_NWZA860 */
 

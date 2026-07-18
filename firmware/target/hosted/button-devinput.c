@@ -36,10 +36,12 @@
 
 #ifdef HAVE_SCROLLWHEEL
 #include "powermgmt.h"
+#endif /* HAVE_SCROLLWHEEL */
+#if defined(HAVE_SCROLLWHEEL) || defined(BUTTON_HOLD_KEYCODE)
 #if defined(HAVE_BACKLIGHT) || defined(HAVE_BUTTON_LIGHT)
 #include "backlight.h"
 #endif
-#endif /* HAVE_SCROLLWHEEL */
+#endif
 
 /* TODO:  HAVE_SCROLLWHEEL is a hack.  Instead of posting the exact number
    of clicks, instead do it similar to the ipod clickwheel and post
@@ -54,6 +56,46 @@
 
 static int num_devices = 0;
 static struct pollfd poll_fds[NR_POLL_DESC];
+
+#ifdef BUTTON_HOLD_KEYCODE
+/* state of the hold switch, reported as a regular key event */
+static bool hold_key_status = false;
+
+bool button_hold(void)
+{
+    return hold_key_status;
+}
+
+/* read the current hold state from all devices, called at init time since
+ * no event is generated for a switch that was toggled while we were not
+ * listening */
+static void load_hold_key_status(void)
+{
+    unsigned char keystates[KEY_MAX / 8 + 1];
+    for(int i = 0; i < num_devices; i++)
+    {
+        int fd = poll_fds[i].fd;
+        if(fd < 0)
+            continue;
+        memset(keystates, 0, sizeof(keystates));
+        if(ioctl(fd, EVIOCGKEY(sizeof(keystates)), keystates) < 0)
+            continue;
+        if(keystates[BUTTON_HOLD_KEYCODE / 8] & (1 << (BUTTON_HOLD_KEYCODE % 8)))
+        {
+            hold_key_status = true;
+            return;
+        }
+    }
+    hold_key_status = false;
+}
+
+/* the kernel does not generate an event for a switch toggled while the
+ * system was suspended, so the target may ask us to re-read the state */
+void button_reload_hold_status(void)
+{
+    load_hold_key_status();
+}
+#endif /* BUTTON_HOLD_KEYCODE */
 
 void button_add_input_device(int i)
 {
@@ -81,6 +123,9 @@ void button_init_device(void)
         poll_fds[i].fd = -1;
         button_add_input_device(i);
     }
+#ifdef BUTTON_HOLD_KEYCODE
+    load_hold_key_status();
+#endif
 }
 
 void button_remove_input_device(int i)
@@ -213,6 +258,20 @@ int button_read_device(BDATA)
                 if(size == (int)sizeof(event)) {
                     switch(event.type) {
                     case EV_KEY: {
+#ifdef BUTTON_HOLD_KEYCODE
+                        /* the hold switch is reported as a key: track its state
+                         * directly instead of going through the button map */
+                        if(event.code == BUTTON_HOLD_KEYCODE) {
+                            bool new_hold = event.value != 0;
+                            if(new_hold != hold_key_status) {
+                                hold_key_status = new_hold;
+#if !defined(BOOTLOADER) && defined(HAVE_BACKLIGHT)
+                                backlight_hold_changed(hold_key_status);
+#endif
+                            }
+                            break;
+                        }
+#endif
                         /* map linux event code to rockbox button bitmap */
                         int bmap = button_map(event.code);
 
@@ -315,14 +374,23 @@ int button_read_device(BDATA)
     }
 #endif /* HAVE_SCROLLWHEEL */
 
+    int btns = button_bitmap;
 #ifdef HAVE_TOUCHSCREEN
+    /* WARNING we must call touchscreen_to_pixels even if there is no touch,
+     * otherwise *data is not filled with the last position and it breaks
+     * everything */
     int touch = touchscreen_to_pixels(_last_x, _last_y, data);
 
     if(_last_touch_state == TOUCHSCREEN_STATE_DOWN)
     {
-        return button_bitmap | touch;
+        btns |= touch;
     }
 #endif
 
-    return button_bitmap;
+#ifdef BUTTON_HOLD_KEYCODE
+    if(hold_key_status)
+        return 0;
+#endif
+
+    return btns;
 }

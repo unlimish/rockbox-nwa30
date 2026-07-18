@@ -432,6 +432,13 @@
 #define UI_LCD_POSX                 78
 #define UI_LCD_POSY                 92
 
+#elif defined(SONY_NWA30)
+#define UI_TITLE                    "Sony NW-A30 Series"
+#define UI_WIDTH                    LCD_WIDTH /* width of GUI window */
+#define UI_HEIGHT                   LCD_HEIGHT /* height of GUI window */
+#define UI_LCD_POSX                 0
+#define UI_LCD_POSY                 0
+
 #elif defined(AGPTEK_ROCKER)
 #define UI_TITLE                    "Agptek Rocker"
 #define UI_WIDTH                    186

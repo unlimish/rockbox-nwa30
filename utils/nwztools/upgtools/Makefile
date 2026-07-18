@@ -30,7 +30,7 @@ $(foreach l,$(LIBCRYPTO_NAMES),\
 endif
 
 CXXFLAGS+=-g -Wall $(DEFINES)
-CFLAGS+=-g -Wall -std=c99 $(DEFINES)
+CFLAGS+=-g -Wall -std=gnu99 $(DEFINES)
 LDLIBS+=-lpthread -lz
 
 BINS=upgtool$(EXE_EXT)

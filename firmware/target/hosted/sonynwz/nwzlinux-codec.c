@@ -102,6 +102,7 @@ enum nwz_codec_t
     NWZ_CS47L01_A,
     NWZ_CS47L01_D,
     NWZ_CXD3774GF_D,
+    NWZ_CXD3778GF_D,
     NWZ_UNK_CODEC,
 };
 
@@ -134,6 +135,8 @@ static enum nwz_codec_t find_codec(void)
         return NWZ_CS47L01_A;
     if(nwz_is_kernel_module_loaded("cxd3774gf_d"))
         return NWZ_CXD3774GF_D;
+    if(nwz_is_kernel_module_loaded("cxd3778gf_d"))
+        return NWZ_CXD3778GF_D;
     return NWZ_UNK_CODEC;
 }
 
@@ -146,6 +149,7 @@ const char *nwz_get_codec_name(void)
         case NWZ_CS47L01_D: return "cs47L01_d";
         case NWZ_CS47L01_A: return "cs47L01_a";
         case NWZ_CXD3774GF_D: return "cxd3774gf_d";
+        case NWZ_CXD3778GF_D: return "cxd3778gf_d";
         default: return "Unknown";
     }
 }
@@ -268,7 +272,15 @@ static void hw_open(void)
 {
     fd_hw = open("/dev/snd/hwC0D0", O_RDWR);
     if(fd_hw < 0)
+    {
+        /* the fd is not actually used for anything at the moment, so only
+         * panic on platforms where we know it must exist */
+#ifdef SONY_NWA30
+        printf("Cannot open '/dev/snd/hwC0D0', ignored\n");
+#else
         panicf("Cannot open '/dev/snd/hwC0D0'");
+#endif
+    }
 }
 
 static void hw_close(void)
@@ -281,26 +293,47 @@ static void hw_close(void)
  * them by default */
 bool audiohw_acoustic_enabled(void)
 {
+#ifdef SONY_NWA30
+    return false; /* no such control on the Hagoromo platform */
+#else
     return alsa_controls_get_bool("CODEC Acoustic Switch");
+#endif
 }
 
 void audiohw_enable_acoustic(bool en)
 {
+#ifdef SONY_NWA30
+    (void)en;
+#else
     alsa_controls_set_bool("CODEC Acoustic Switch", en);
+#endif
 }
 
 bool audiohw_cuerev_enabled(void)
 {
+#ifdef SONY_NWA30
+    return false;
+#else
     return alsa_controls_get_bool("CODEC Cue/Rev Switch");
+#endif
 }
 
 void audiohw_enable_cuerev(bool en)
 {
+#ifdef SONY_NWA30
+    (void)en;
+#else
     alsa_controls_set_bool("CODEC Cue/Rev Switch", en);
+#endif
 }
 
 void audiohw_set_playback_src(enum nwz_src_t src)
 {
+#ifdef SONY_NWA30
+    /* TODO: the Hagoromo platform uses different controls for source
+     * selection, needs to be investigated for FM radio support */
+    (void)src;
+#else
     switch(src)
     {
         case NWZ_RADIO: alsa_controls_set_enum("Playback Src Switch", "Fm"); break;
@@ -308,11 +341,29 @@ void audiohw_set_playback_src(enum nwz_src_t src)
         case NWZ_PLAYBACK:
         default: alsa_controls_set_enum("Playback Src Switch", "Music"); break;
     }
+#endif
 }
 
 void audiohw_preinit(void)
 {
     alsa_controls_init("default");
+#ifdef SONY_NWA30
+    /* the Hagoromo platform (CXD3778GF) exposes different ALSA controls.
+     * Just make sure the output is unmuted and the headphone amp is on */
+    alsa_controls_set_bool("analog playback mute", false);
+    alsa_controls_set_bool("headphone amp", true);
+    /* set the hardware "master volume" to its maximum (0-120), the actual
+     * volume is then controlled digitally, see audiohw_set_volume() */
+    if(alsa_has_control("master volume"))
+    {
+        long vols[2] = {120, 120};
+        int vol_cnt;
+        alsa_controls_get_info("master volume", &vol_cnt);
+        alsa_controls_set_ints("master volume", vol_cnt, vols);
+    }
+    /* sample rate */
+    has_sample_rate = alsa_has_control("Sampling Rate");
+#else
     /* turn on codec */
     alsa_controls_set_bool("CODEC Power Switch", true);
     /* mute */
@@ -330,6 +381,7 @@ void audiohw_preinit(void)
     alsa_controls_set_bool("CODEC Mute Switch", false);
     /* sample rate */
     has_sample_rate = alsa_has_control("Sampling Rate");
+#endif
 
     /* init noican */
     noican_init();
@@ -374,6 +426,23 @@ static void nwz_set_driver_vol(int vol)
 /* volume is in tenth-dB */
 void audiohw_set_volume(int vol_l, int vol_r)
 {
+#ifdef SONY_NWA30
+    /* The Hagoromo volume curve is defined by a model-specific table loaded
+     * into the codec (see /proc/icx_audio_cxd3778gf_data/ovt), so we cannot
+     * reproduce it here. Instead keep the hardware "master volume" at maximum
+     * and do everything with the digital volume, which is always safe. */
+    int min_pcm = -430;
+    int max_pcm = 0;
+    if(vol_l < min_pcm)
+        vol_l = min_pcm;
+    if(vol_l > max_pcm)
+        vol_l = max_pcm;
+    if(vol_r < min_pcm)
+        vol_r = min_pcm;
+    if(vol_r > max_pcm)
+        vol_r = max_pcm;
+    pcm_set_mixer_volume(vol_l, vol_r);
+#else
     /* FIXME at the moment we don't support balance and just average left and right.
      * But this could be implemented using pcm alsa digital volume */
 
@@ -416,6 +485,7 @@ void audiohw_set_volume(int vol_l, int vol_r)
     nwz_set_driver_vol(drv_vol);
     printf(" set digital volume %d dB\n", vol / 10);
     pcm_set_mixer_volume(vol, vol);
+#endif /* SONY_NWA30 */
 }
 
 void audiohw_close(void)

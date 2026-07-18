@@ -66,7 +66,7 @@
 
 /* The A15 and A25 support more sampling rates, in fact they support crazy high bit-rates such
  * as 176.4 and 192 kHz but Rockbox does not support those */
-#if defined(SONY_NWZA10) || defined(SONY_NWA20)
+#if defined(SONY_NWZA10) || defined(SONY_NWA20) || defined(SONY_NWA30)
 #define HW_SAMPR_CAPS   (SAMPR_CAP_44 | SAMPR_CAP_48 | SAMPR_CAP_88 | SAMPR_CAP_96 | SAMPR_CAP_176 | SAMPR_CAP_192)
 #endif
 
@@ -119,6 +119,12 @@
 
 /* special define to be use in various places */
 #define SONY_NWZ_LINUX
+
+/* path of the original firmware application once renamed by the dualboot
+ * installer: the bootloader chain-loads it to run the OF */
+#ifndef NWZ_OF_APP
+#define NWZ_OF_APP  "/usr/local/bin/SpiderApp.of"
+#endif
 
 /* Battery */
 #define BATTERY_CAPACITY_DEFAULT 600 /* default battery capacity */

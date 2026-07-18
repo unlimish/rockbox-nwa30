@@ -22,6 +22,7 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <string.h>
+#include <dirent.h>
 #include <linux/fb.h>
 #include <sys/mman.h>
 #include <sys/ioctl.h>
@@ -36,7 +37,7 @@ enum
 {
     FB_MP200, /* MP200 fb driver */
     FB_EMXX, /* EMXX fb driver */
-    FB_OTHER, /* unknown */
+    FB_OTHER, /* unknown, assume plain fbdev (eg MediaTek on Hagoromo) */
 }nwz_fb_type;
 
 void identify_fb(const char *id)
@@ -48,6 +49,57 @@ void identify_fb(const char *id)
     else
         nwz_fb_type = FB_OTHER;
     printf("lcd: fb id = '%s' -> type = %d\n", id, nwz_fb_type);
+}
+
+/* On Hagoromo (NW-A30 and later), the framebuffer is a plain fbdev device
+ * without the Sony ioctls, and the backlight is handled through sysfs.
+ * The driver name varies, so just pick the first entry with a brightness
+ * attribute. */
+static char sysfs_bl_brightness[128];
+static char sysfs_bl_max[128];
+static int sysfs_bl_max_value = 255;
+
+static void find_sysfs_backlight(void)
+{
+    sysfs_bl_brightness[0] = 0;
+    const char *base = "/sys/class/backlight";
+    DIR *dir = opendir(base);
+    if(dir == NULL)
+        return;
+    struct dirent *entry;
+    while((entry = readdir(dir)))
+    {
+        if(entry->d_name[0] == '.')
+            continue;
+        snprintf(sysfs_bl_brightness, sizeof(sysfs_bl_brightness),
+            "%s/%s/brightness", base, entry->d_name);
+        snprintf(sysfs_bl_max, sizeof(sysfs_bl_max),
+            "%s/%s/max_brightness", base, entry->d_name);
+        /* check that we can actually use this one */
+        FILE *f = fopen(sysfs_bl_max, "re");
+        if(f)
+        {
+            if(fscanf(f, "%d", &sysfs_bl_max_value) != 1)
+                sysfs_bl_max_value = 255;
+            fclose(f);
+            break;
+        }
+    }
+    closedir(dir);
+    printf("lcd: sysfs backlight = '%s' (max %d)\n",
+        sysfs_bl_brightness[0] ? sysfs_bl_brightness : "<none>", sysfs_bl_max_value);
+}
+
+static void sysfs_backlight_brightness(int brightness)
+{
+    if(sysfs_bl_brightness[0] == 0)
+        return;
+    FILE *f = fopen(sysfs_bl_brightness, "we");
+    if(f == NULL)
+        return;
+    /* scale Rockbox 0-5 range to the driver range */
+    fprintf(f, "%d", brightness * sysfs_bl_max_value / MAX_BRIGHTNESS_SETTING);
+    fclose(f);
 }
 
 /* select which page (0 or 1) to display, disable DSP, transparency and rotation */
@@ -69,6 +121,9 @@ static int nwz_fb_set_page(int page)
 /* make sure framebuffer is in standard state so rendering works */
 static int nwz_fb_set_standard_mode(void)
 {
+    /* plain fbdev (Hagoromo): nothing to set up */
+    if(nwz_fb_type == FB_OTHER)
+        return 0;
     /* disable timer (apparently useless with LCD) */
     struct nwz_fb_update_timer update_timer;
     update_timer.timerflag = NWZ_FB_TIMER_OFF;
@@ -81,6 +136,11 @@ static int nwz_fb_set_standard_mode(void)
 
 void backlight_hw_brightness(int brightness)
 {
+    if(nwz_fb_type == FB_OTHER)
+    {
+        sysfs_backlight_brightness(brightness);
+        return;
+    }
     struct nwz_fb_brightness bl;
     bl.level = brightness; /* brightness level: 0-5 */
     bl.step = 25; /* number of hardware steps to do when changing: 1-100 (smooth transition) */
@@ -120,7 +180,10 @@ void lcd_shutdown(void)
 
 void lcd_init_device(void)
 {
+    /* old icx-based players use /dev/fb/0, Hagoromo uses the standard /dev/fb0 */
     fb_fd = open("/dev/fb/0", O_RDWR);
+    if(fb_fd < 0)
+        fb_fd = open("/dev/fb0", O_RDWR);
     if(fb_fd < 0)
     {
         perror("Cannot open framebuffer");
@@ -157,15 +220,21 @@ void lcd_init_device(void)
     {
         perror("Cannot map framebuffer");
         fflush(stdout);
-        execlp("/usr/local/bin/SpiderApp.of", "SpiderApp", NULL);
+        execlp(NWZ_OF_APP, "of", NULL);
         exit(0);
     }
     /* make sure rendering state is correct */
     nwz_fb_set_standard_mode();
+    /* on plain fbdev devices, find the sysfs backlight interface */
+    if(nwz_fb_type == FB_OTHER)
+        find_sysfs_backlight();
 }
 
 static void redraw(void)
 {
+    /* on plain fbdev the data is already in the visible framebuffer */
+    if(nwz_fb_type == FB_OTHER)
+        return;
     nwz_fb_set_page(0);
 }
 

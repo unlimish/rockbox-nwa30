@@ -17,11 +17,12 @@
  * KIND, either express or implied.
  *
  ****************************************************************************/
-#define _XOPEN_SOURCE 500
+#define _XOPEN_SOURCE 700
 #define _DEFAULT_SOURCE
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include "rbscsi.h"
 
 static void misc_std_printf(void *user, const char *fmt, ...)

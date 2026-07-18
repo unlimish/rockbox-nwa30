@@ -130,7 +130,13 @@ target/hosted/kernel-unix.c
 target/hosted/filesystem-unix.c
 target/hosted/lc-unix.c
 target/hosted/sonynwz/lcd-nwz.c
+#if defined(SONY_NWA30)
+/* the Hagoromo platform reports keys as standard linux input events */
+target/hosted/button-devinput.c
+target/hosted/sonynwz/button-nwa30.c
+#else
 target/hosted/sonynwz/button-nwz.c
+#endif
 target/hosted/sonynwz/system-nwz.c
 target/hosted/sonynwz/powermgmt-nwz.c
 target/hosted/sonynwz/power-nwz.c

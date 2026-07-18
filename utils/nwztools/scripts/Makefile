@@ -12,6 +12,8 @@ all:
 	@echo "- exec_file_extern: craft an upgrade that execute a file on the user partition"
 	@echo "- list_targets: produce of list of available targets"
 	@echo "- install_dualboot"
+	@echo "- recon_hagoromo: craft an upgrade that dumps system info (Hagoromo platforms)"
+	@echo "- install_dualboot_hagoromo: install dualboot on Hagoromo platforms (NW-A30...)"
 
 ifndef UPG
 want_upg:
@@ -75,6 +77,15 @@ exec_file: want_target want_exec want_upg
 
 install_dualboot: want_target want_exec want_upg
 	$(call UPGPACK, install_dualboot.sh $(EXEC))
+
+# On Hagoromo (NW-A30+) the stock updater always extracts file 1 as md5.txt and
+# aborts if it is missing, so every UPG must carry a (dummy) file 1. The dualboot
+# payload is therefore file 2.
+install_dualboot_hagoromo: want_target want_exec want_upg
+	$(call UPGPACK, install_dualboot_hagoromo.sh hagoromo_md5.txt $(EXEC))
+
+recon_hagoromo: want_target want_upg
+	$(call UPGPACK, recon_hagoromo.sh hagoromo_md5.txt)
 
 exec_file_extern.tmp: want_exec want_upg want_log
 	cat exec_file_extern.sh.in | sed "s|NWZ_EXEC_THIS|$(EXEC)|" |\

@@ -407,6 +407,11 @@ simcc () {
    SHARED_LDFLAGS="-dynamiclib -Wl,-no_warn_duplicate_libraries"
    LDMAP_OPT="-map"
    macbuild="yes"
+   # the Darwin linker does not support those options
+   GLOBAL_LDOPTS=`echo $GLOBAL_LDOPTS | sed -e s/\-Wl,-z,defs//`
+   GLOBAL_LDOPTS=`echo $GLOBAL_LDOPTS | sed -e s/\-Wl,-z,noexecstack//`
+   # there is no ALSA nor librt on Darwin, the simulator uses SDL instead
+   LDOPTS=`echo $LDOPTS | sed -e s/-lasound// -e s/-lrt//`
    ;;
 
    SunOS)
@@ -1727,7 +1732,7 @@ cat <<EOF
  227) NW-A20 series        240) Rocker           ==AIGO==
  228) NWZ-A860 series                            245) Eros Q / K (hosted)
  229) NWZ-S750 series      ==iBasso==            247) Eros Q / K native
-                           250) DX50                   (hw1/hw2 bl, all hw rb)
+ 235) NW-A30 series        250) DX50                   (hw1/hw2 bl, all hw rb)
  ==FiiO==                  251) DX90             248) Eros Q / K native
  244) M3K Linux                                        (hw3 bl only)
  246) M3K baremetal        ==xDuoo==             249) Eros Q / K native
@@ -3620,6 +3625,28 @@ fi
     t_cpu="hosted"
     t_manufacturer="sonynwz"
     t_model="nwa20"
+    uname=`uname`
+    sonynwzcc
+    ;;
+
+   235|sonynwa30)
+    application="yes"
+    target_id=125
+    modelname="sonynwa30"
+    target="SONY_NWA30"
+    memory=32
+    bmp2rb_mono="$rootdir/tools/bmp2rb -f 0"
+    bmp2rb_native="$rootdir/tools/bmp2rb -f 4"
+    tool="cp"
+    output="rockbox.sony"
+    boottool="$rootdir/tools/scramble -add=a30"
+    bootoutput="bootloader-nwa30.sony"
+    appextra="gui:recorder:radio"
+    plugins=""
+    toolset=$genericbitmaptools
+    t_cpu="hosted"
+    t_manufacturer="sonynwz"
+    t_model="nwa30"
     uname=`uname`
     sonynwzcc
     ;;
