@@ -22,21 +22,20 @@
 
 _UPDATE_FN_=`nvpstr ufn`
 UPG="/contents/$_UPDATE_FN_.UPG"
+# The firmware upgrade environment does NOT mount the system partition (it is
+# a self-contained ramdisk), so we have to mount it ourselves. The partition is
+# exposed as a symlink in / (confirmed by recon: /emmc@android -> mmcblk0p19).
+SYSTEM_PART=/emmc@android
 OF_APP=/system/vendor/sony/bin/HgrmMediaPlayerApp
 BL_TMP=/tmp/rockbox_bootloader
+we_mounted_system=0
 
 # log everything to the user partition so we can inspect it afterwards
 exec > /contents/install_dualboot_log.txt 2>&1
 set -x
 
-# the stock application must exist (or we already backed it up on a previous run)
-if [ ! -e "$OF_APP" ] && [ ! -e "$OF_APP.of" ]; then
-    echo "ERROR: $OF_APP not found"
-    exit 1
-fi
-
 # extract our bootloader (file index 2) to a temporary location FIRST, so that
-# we never remove the stock app unless we have a valid replacement ready
+# we never touch the system partition unless we have a valid replacement ready
 mkdir -p /tmp
 fwpchk -f "$UPG" -2 "$BL_TMP"
 if [ "$?" != 0 ] || [ ! -s "$BL_TMP" ]; then
@@ -44,34 +43,62 @@ if [ "$?" != 0 ] || [ ! -s "$BL_TMP" ]; then
     exit 1
 fi
 
-# /system is mounted read-only, make it writable
-mount -o remount,rw /system
-if [ "$?" != 0 ]; then
-    echo "ERROR: cannot remount /system read-write"
+# Mount the system partition read-write. It is not mounted in this environment,
+# but do not treat a mount failure as fatal: it might already be mounted (there
+# is no grep here to check), in which case the existence test below decides.
+mkdir -p /system
+for fs in ext4 ext3 ext2
+do
+    if mount -t $fs "$SYSTEM_PART" /system
+    then
+        we_mounted_system=1
+        break
+    fi
+done
+
+# the stock application must exist (or we already backed it up on a previous run)
+if [ ! -e "$OF_APP" ] && [ ! -e "$OF_APP.of" ]; then
+    echo "ERROR: $OF_APP not found (is $SYSTEM_PART really the system partition?)"
+    ls -l /system
+    if [ "$we_mounted_system" = 1 ]; then
+        umount /system
+    fi
     exit 1
 fi
+
+# release the system partition the same way we took it
+release_system()
+{
+    sync
+    if [ "$we_mounted_system" = 1 ]; then
+        umount /system
+    else
+        mount -o remount,ro /system
+    fi
+}
 
 # back up the original application once
 if [ ! -e "$OF_APP.of" ]; then
     mv "$OF_APP" "$OF_APP.of"
     if [ "$?" != 0 ]; then
         echo "ERROR: cannot back up $OF_APP"
-        mount -o remount,ro /system
+        release_system
         exit 1
     fi
 fi
 
-# install our bootloader in place of the stock app
-cp "$BL_TMP" "$OF_APP"
-if [ "$?" != 0 ]; then
+# Install our bootloader in place of the stock app. This environment has no
+# 'cp', so extract it straight from the UPG into its final location (the same
+# thing the stock update script does).
+fwpchk -f "$UPG" -2 "$OF_APP"
+if [ "$?" != 0 ] || [ ! -s "$OF_APP" ]; then
     echo "ERROR: cannot install bootloader, restoring stock app"
     mv "$OF_APP.of" "$OF_APP"
-    mount -o remount,ro /system
+    release_system
     exit 1
 fi
 chmod 755 "$OF_APP"
 
-sync
-mount -o remount,ro /system
+release_system
 echo "Installation successful"
 exit 0

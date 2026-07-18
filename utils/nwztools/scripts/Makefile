@@ -87,6 +87,10 @@ install_dualboot_hagoromo: want_target want_exec want_upg
 recon_hagoromo: want_target want_upg
 	$(call UPGPACK, recon_hagoromo.sh hagoromo_md5.txt)
 
+# recovery: put the stock application back if the player no longer boots
+uninstall_dualboot_hagoromo: want_target want_upg
+	$(call UPGPACK, uninstall_dualboot_hagoromo.sh hagoromo_md5.txt)
+
 exec_file_extern.tmp: want_exec want_upg want_log
 	cat exec_file_extern.sh.in | sed "s|NWZ_EXEC_THIS|$(EXEC)|" |\
 	sed "s|NWZ_LOG_THIS|$(LOG)|" > $@

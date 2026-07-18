@@ -666,6 +666,37 @@ sonynwzcc () {
  app_type="sonynwz"
 }
 
+# The Sony NW-A30 and later ("Hagoromo") are a different machine altogether from
+# the icx-based players above: a MediaTek MT8127 (Cortex-A7, ARMv7-A) running a
+# hard-float userspace. They must be built with the hard-float toolchain
+# (rockboxdev.sh --target=h): a soft-float binary asks for /lib/ld-linux.so.3,
+# which does not exist on these devices (they ship /lib/ld-linux-armhf.so.3), so
+# it cannot be executed at all.
+sonynwahfcc () {
+ GCCOPTS=`echo $CCOPTS | sed -e s/-ffreestanding// -e s/-nostdlib//`
+ GCCOPTS="$GCCOPTS -mcpu=cortex-a7 -mfloat-abi=hard -mfpu=vfpv3-d16"
+ # On ARMv7 gcc loads addresses with movw/movt pairs, which produce
+ # R_ARM_MOVW_ABS_NC/R_ARM_MOVT_ABS relocations that the codec and plugin
+ # loader cannot resolve ("dangerous relocation: unsupported relocation").
+ # Force plain word-sized absolute relocations instead.
+ GCCOPTS="$GCCOPTS -mword-relocations"
+ GCCOPTIMIZE=''
+ LDOPTS="-lasound -lpthread -lm -ldl -lrt $LDOPTS"
+ GLOBAL_LDOPTS="$GLOBAL_LDOPTS -Wl,-z,defs" # warn about undefined symbols in shared libraries
+ GLOBAL_LDOPTS="$GLOBAL_LDOPTS -Wl,-z,noexecstack" # Stack is not executable
+ SHARED_LDFLAGS="-shared"
+ SHARED_CFLAGS=''
+ endian="little"
+ app_type="sonynwz"
+
+ # Include path
+ GCCOPTS="$GCCOPTS  -D_GNU_SOURCE=1 -U_FORTIFY_SOURCE -D_REENTRANT"
+
+ # Set up compiler
+ gccchoice="9.5.0"
+ prefixtools "arm-rockbox-linux-gnueabihf-"
+}
+
 androidcc () {
     if [ -z "$ANDROID_SDK_PATH" ]; then
         echo "ERROR: You need the Android SDK installed and have the ANDROID_SDK_PATH"
@@ -3648,7 +3679,7 @@ fi
     t_manufacturer="sonynwz"
     t_model="nwa30"
     uname=`uname`
-    sonynwzcc
+    sonynwahfcc
     # We cannot rely on the stock /system having a compatible libasound, so we
     # ship our own in .rockbox/lib and look for it there first (harmless if the
     # system provides one too). Absolute path so the bootloader finds it as well.

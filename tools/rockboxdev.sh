@@ -794,6 +794,7 @@ if [ -z "$RBDEV_TARGET" ]; then
     echo "a   - arm      (ipods, iriver H10, Sansa, D2, Gigabeat, older Sony NWZ, etc)"
     echo "i   - mips     (Jz47xx/x1000 based players)"
     echo "x   - arm-linux  (Generic Linux ARM: Samsung ypr0, Linux-based Sony NWZ)"
+    echo "h   - arm-linux-hf (ARMv7 hard-float Linux: Sony NW-A30 and later)"
     echo "y   - mips-linux  (Generic Linux MIPS: eg the many HiBy-OS targets)"
     echo "separate multiple targets with spaces"
     echo "(Example: \"m a i\" will build m68k, arm, and mips)"
@@ -856,6 +857,36 @@ do
             # build alsa-lib
             # we need to set the prefix to how it is on device (/usr) and then
             # tweak install dir at make install step
+            alsalib_ver="1.0.19"
+            gettool "alsa-lib" "$alsalib_ver"
+            extract "alsa-lib-$alsalib_ver"
+            prefix="/usr" buildtool "alsa-lib" "$alsalib_ver" \
+                "--host=$target --disable-python" "" "install DESTDIR=$prefix/$target/sysroot"
+            ;;
+        [Hh])
+            # IMPORTANT NOTE
+            # Unlike the older icx-based players handled by the 'x' toolchain,
+            # the Sony NW-A30 and later ("Hagoromo" platform) run a hard-float
+            # userspace, so they need a completely separate toolchain: a
+            # soft-float binary asks for /lib/ld-linux.so.3 which simply does
+            # not exist on those devices (they ship /lib/ld-linux-armhf.so.3),
+            # so it cannot even be started.
+            #
+            # Sony NW-A30 (NW-A35, confirmed on device):
+            #   SoC:    MediaTek MT8127 (Cortex-A7, ARMv7-A, VFPv4/NEON)
+            #   kernel: 3.10.26
+            #   glibc:  2.19
+            #
+            # We build against glibc 2.20 (the same version, and thus the same
+            # patches, as the 'x' toolchain): it is one release newer than the
+            # device but adds almost no new symbol versions, so the binaries
+            # still run on 2.19. Target ARMv7-A with VFPv3-D16 to stay
+            # compatible with every Hagoromo model.
+            glibcopts="--enable-kernel=3.0 --enable-oldest-abi=2.4"
+            build_linux_toolchain "arm-rockbox-linux-gnueabihf" "2.38" "" "" "9.5.0" \
+                "$gccopts --with-arch=armv7-a --with-fpu=vfpv3-d16 --with-float=hard" \
+                "3.10.108" "" "2.20" "$glibcopts" "glibc-220-make44.patch glibc-2.20-gcc10.patch"
+            # build alsa-lib (same rationale as the 'x' toolchain above)
             alsalib_ver="1.0.19"
             gettool "alsa-lib" "$alsalib_ver"
             extract "alsa-lib-$alsalib_ver"
