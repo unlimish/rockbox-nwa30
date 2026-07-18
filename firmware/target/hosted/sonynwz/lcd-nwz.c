@@ -22,6 +22,7 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <string.h>
+#include <errno.h>
 #include <dirent.h>
 #include <linux/fb.h>
 #include <sys/mman.h>
@@ -202,6 +203,22 @@ void lcd_shutdown(void)
     close(fb_fd);
 }
 
+/* We cannot do anything useful without a framebuffer, but simply exiting is a
+ * bad idea: on the Hagoromo platform we run in place of the stock application,
+ * which the system restarts when it dies, so exiting turns into a boot loop
+ * with the device stuck and no way in. Hand over to the original firmware
+ * instead: the player boots normally and the reason is left in the log. */
+static void lcd_init_failed(const char *what)
+{
+    printf("lcd: %s, booting the OF instead\n", what);
+    fflush(stdout);
+    execlp(NWZ_OF_APP, "of", NULL);
+    /* if even that fails there is nothing left to try */
+    printf("lcd: cannot run %s: %s\n", NWZ_OF_APP, strerror(errno));
+    fflush(stdout);
+    exit(0);
+}
+
 void lcd_init_device(void)
 {
     /* old icx-based players use /dev/fb/0, Hagoromo exposes the framebuffer as
@@ -215,7 +232,7 @@ void lcd_init_device(void)
     if(fb_fd < 0)
     {
         perror("Cannot open framebuffer");
-        exit(0);
+        lcd_init_failed("cannot open framebuffer");
     }
 
     /* get fixed and variable information */
@@ -223,21 +240,22 @@ void lcd_init_device(void)
     if(ioctl(fb_fd, FBIOGET_FSCREENINFO, &finfo) < 0)
     {
         perror("Cannot read framebuffer fixed information");
-        exit(0);
+        lcd_init_failed("cannot read framebuffer fixed information");
     }
     identify_fb(finfo.id);
     struct fb_var_screeninfo vinfo;
     if(ioctl(fb_fd, FBIOGET_VSCREENINFO, &vinfo) < 0)
     {
         perror("Cannot read framebuffer variable information");
-        exit(0);
+        lcd_init_failed("cannot read framebuffer variable information");
     }
     /* check resolution and framebuffer size */
     if(vinfo.xres != LCD_WIDTH || vinfo.yres != LCD_HEIGHT || vinfo.bits_per_pixel != LCD_DEPTH)
     {
-        printf("Unexpected framebuffer resolution: %dx%dx%d\n", vinfo.xres,
-            vinfo.yres, vinfo.bits_per_pixel);
-        exit(0);
+        printf("Unexpected framebuffer resolution: %dx%dx%d (expected %dx%dx%d)\n",
+            vinfo.xres, vinfo.yres, vinfo.bits_per_pixel,
+            LCD_WIDTH, LCD_HEIGHT, LCD_DEPTH);
+        lcd_init_failed("unexpected framebuffer resolution");
     }
     /* Note: we use a framebuffer size of width*height*bbp. We cannot trust the
      * values returned by the driver for line_length */
@@ -247,9 +265,7 @@ void lcd_init_device(void)
     if((void *)nwz_framebuffer == (void *)-1)
     {
         perror("Cannot map framebuffer");
-        fflush(stdout);
-        execlp(NWZ_OF_APP, "of", NULL);
-        exit(0);
+        lcd_init_failed("cannot map framebuffer");
     }
     /* make sure rendering state is correct */
     nwz_fb_set_standard_mode();

@@ -681,7 +681,11 @@ sonynwahfcc () {
  # Force plain word-sized absolute relocations instead.
  GCCOPTS="$GCCOPTS -mword-relocations"
  GCCOPTIMIZE=''
- LDOPTS="-lasound -lpthread -lm -ldl -lrt $LDOPTS"
+ # --as-needed must precede the libraries it applies to: only record the ones
+ # we actually use. This matters for the bootloader, which needs no audio, as
+ # every unnecessary DT_NEEDED is one more way for it to fail to start (which
+ # looks like a boot loop, since the system restarts the app it replaces).
+ LDOPTS="-Wl,--as-needed -lasound -lpthread -lm -ldl -lrt $LDOPTS"
  GLOBAL_LDOPTS="$GLOBAL_LDOPTS -Wl,-z,defs" # warn about undefined symbols in shared libraries
  GLOBAL_LDOPTS="$GLOBAL_LDOPTS -Wl,-z,noexecstack" # Stack is not executable
  SHARED_LDFLAGS="-shared"
