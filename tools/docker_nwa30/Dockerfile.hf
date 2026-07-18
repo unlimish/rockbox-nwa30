@@ -1,0 +1,32 @@
+# Incremental build: adds the hard-float ARMv7 toolchain (Sony NW-A30) on top
+# of the existing rockbox-nwa30 image, so the soft-float toolchain does not have
+# to be rebuilt from scratch. build/Dockerfile is the equivalent recipe from
+# scratch; this one only exists to save ~40 minutes locally.
+#   docker build -f tools/docker_nwa30/Dockerfile.hf -t rockbox-nwa30:hf .
+FROM rockbox-nwa30:latest
+
+COPY tools/rockboxdev.sh /tmp/rockboxdev.sh
+COPY tools/toolchain-patches /tmp/toolchain-patches
+
+RUN chmod +x /tmp/rockboxdev.sh && \
+    /tmp/rockboxdev.sh --target=h --prefix=/opt/rbtoolchain-hf --makeflags=-j$(nproc) && \
+    rm -rf /tmp/rb /tmp/build* 2>/dev/null || true
+
+# must come before the alsa build below, otherwise configure cannot find
+# arm-rockbox-linux-gnueabihf-gcc and silently falls back to the native compiler
+ENV PATH=/opt/rbtoolchain/bin:/opt/rbtoolchain-hf/bin:$PATH
+
+# alsa-lib for the hard-float sysroot (the bundled config.guess predates aarch64
+# hosts, so replace it before configuring)
+RUN cd /tmp && \
+    wget -q https://www.alsa-project.org/files/pub/lib/alsa-lib-1.0.19.tar.bz2 && \
+    tar xf alsa-lib-1.0.19.tar.bz2 && \
+    cd alsa-lib-1.0.19 && \
+    cp /usr/share/automake-1.16/config.guess /usr/share/automake-1.16/config.sub . && \
+    ./configure --host=arm-rockbox-linux-gnueabihf --prefix=/usr --disable-python && \
+    make -j$(nproc) && \
+    make install DESTDIR=/opt/rbtoolchain-hf/arm-rockbox-linux-gnueabihf/sysroot && \
+    cd / && rm -rf /tmp/alsa-lib*
+
+WORKDIR /rockbox
+CMD ["/bin/bash"]
