@@ -17,39 +17,56 @@
  * KIND, either express or implied.
  *
  ****************************************************************************/
+#include <stdio.h>
 #include <linux/input.h>
 
 #include "button.h"
 #include "button-target.h"
 
-/* NW-A30 key layout (Hagoromo platform):
- * Unlike the older icx-based players, the keys are reported as standard
- * linux input events spread over several devices:
- *   /dev/input/event0: power + hold switch
- *   /dev/input/event1: touchscreen
- *   /dev/input/event4: playback keys
- * The mapping below follows what the stock kernel reports.
- * The hold switch (KEY_H) is handled directly by button-devinput.c
- * (BUTTON_HOLD_KEYCODE) and never reaches this map. */
+/* NW-A30 key layout (Hagoromo platform, confirmed by recon on a real NW-A35):
+ *   /dev/input/event0: "mtk-kpd" hardware keypad (transport keys, volume,
+ *                      power) - reports the keycodes handled below
+ *   /dev/input/event1: "himax-hx8526-icx" capacitive touchscreen (BTN_TOUCH)
+ * button-devinput.c reads every device and calls this to translate keycodes.
+ *
+ * The keypad exposes: HOME(102), END(107), VOLUMEDOWN(114), VOLUMEUP(115),
+ * POWER(116), MENU(139), BACK(158) plus three Sony-custom codes 211/212/231
+ * for the physical transport buttons whose exact assignment still needs to be
+ * confirmed on the device - so we map them tentatively and log every keycode
+ * we do NOT recognise (goes to /contents/rockbox.log) to make that easy. */
+
+/* Sony-custom transport keycodes (not in linux/input.h) - tentative */
+#define NWA30_KEY_A 211
+#define NWA30_KEY_B 212
+#define NWA30_KEY_C 231
+
 int button_map(int keycode)
 {
     switch(keycode)
     {
-        case KEY_ENTER: /* play/pause */
-            return BUTTON_PLAY;
-        case KEY_LEFT: /* previous/rewind */
-            return BUTTON_REW;
-        case KEY_RIGHT: /* next/fast-forward */
-            return BUTTON_FF;
-        case KEY_VOLUMEDOWN:
-            return BUTTON_VOL_DOWN;
         case KEY_VOLUMEUP:
             return BUTTON_VOL_UP;
-        case KEY_POWER:
+        case KEY_VOLUMEDOWN:
+            return BUTTON_VOL_DOWN;
+        case KEY_HOME:
+        case KEY_BACK:
             return BUTTON_BACK;
+        case KEY_MENU:
+            return BUTTON_PLAY;
+        /* tentative transport mapping, refine once confirmed on device */
+        case NWA30_KEY_A:
+            return BUTTON_LEFT;  /* guess: previous */
+        case NWA30_KEY_B:
+            return BUTTON_RIGHT; /* guess: next */
+        case NWA30_KEY_C:
+            return BUTTON_PLAY;  /* guess: play/pause */
         case BTN_TOUCH:
             return BUTTON_TOUCH;
+        case KEY_POWER:
+            /* handled as the power button, not a navigation key */
+            return 0;
         default:
+            printf("button: unmapped keycode %d (0x%x)\n", keycode, keycode);
             return 0;
     }
 }

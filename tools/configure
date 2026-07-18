@@ -3649,6 +3649,10 @@ fi
     t_model="nwa30"
     uname=`uname`
     sonynwzcc
+    # We cannot rely on the stock /system having a compatible libasound, so we
+    # ship our own in .rockbox/lib and look for it there first (harmless if the
+    # system provides one too). Absolute path so the bootloader finds it as well.
+    LDOPTS="$LDOPTS -Wl,-rpath,/contents/.rockbox/lib"
     ;;
 
    228|sonynwza860)

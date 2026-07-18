@@ -33,6 +33,8 @@
 
 static int fb_fd = 0;
 fb_data *nwz_framebuffer = 0; /* global variable, see lcd-target.h */
+/* saved variable screen info, used to pan/flip on plain fbdev (mtkfb) */
+static struct fb_var_screeninfo nwz_vinfo;
 enum
 {
     FB_MP200, /* MP200 fb driver */
@@ -59,33 +61,55 @@ static char sysfs_bl_brightness[128];
 static char sysfs_bl_max[128];
 static int sysfs_bl_max_value = 255;
 
+/* try to use a specific led/backlight sysfs directory, return true on success */
+static bool try_sysfs_backlight(const char *dir)
+{
+    snprintf(sysfs_bl_brightness, sizeof(sysfs_bl_brightness),
+        "%s/brightness", dir);
+    snprintf(sysfs_bl_max, sizeof(sysfs_bl_max),
+        "%s/max_brightness", dir);
+    /* the brightness node must be writable for us to use it */
+    if(access(sysfs_bl_brightness, W_OK) != 0)
+    {
+        sysfs_bl_brightness[0] = 0;
+        return false;
+    }
+    /* max_brightness is optional (led class always has it, but be safe) */
+    sysfs_bl_max_value = 255;
+    FILE *f = fopen(sysfs_bl_max, "re");
+    if(f)
+    {
+        if(fscanf(f, "%d", &sysfs_bl_max_value) != 1)
+            sysfs_bl_max_value = 255;
+        fclose(f);
+    }
+    return true;
+}
+
 static void find_sysfs_backlight(void)
 {
     sysfs_bl_brightness[0] = 0;
-    const char *base = "/sys/class/backlight";
-    DIR *dir = opendir(base);
-    if(dir == NULL)
-        return;
-    struct dirent *entry;
-    while((entry = readdir(dir)))
+    /* on the Hagoromo platform (NW-A30, mt65xx_leds driver) the LCD backlight
+     * is an led class device at this fixed path */
+    if(try_sysfs_backlight("/sys/class/leds/lcd-backlight"))
+        goto done;
+    /* otherwise scan the generic backlight class */
+    DIR *dir = opendir("/sys/class/backlight");
+    if(dir != NULL)
     {
-        if(entry->d_name[0] == '.')
-            continue;
-        snprintf(sysfs_bl_brightness, sizeof(sysfs_bl_brightness),
-            "%s/%s/brightness", base, entry->d_name);
-        snprintf(sysfs_bl_max, sizeof(sysfs_bl_max),
-            "%s/%s/max_brightness", base, entry->d_name);
-        /* check that we can actually use this one */
-        FILE *f = fopen(sysfs_bl_max, "re");
-        if(f)
+        struct dirent *entry;
+        while((entry = readdir(dir)))
         {
-            if(fscanf(f, "%d", &sysfs_bl_max_value) != 1)
-                sysfs_bl_max_value = 255;
-            fclose(f);
-            break;
+            char path[96];
+            if(entry->d_name[0] == '.')
+                continue;
+            snprintf(path, sizeof(path), "/sys/class/backlight/%s", entry->d_name);
+            if(try_sysfs_backlight(path))
+                break;
         }
+        closedir(dir);
     }
-    closedir(dir);
+done:
     printf("lcd: sysfs backlight = '%s' (max %d)\n",
         sysfs_bl_brightness[0] ? sysfs_bl_brightness : "<none>", sysfs_bl_max_value);
 }
@@ -180,8 +204,12 @@ void lcd_shutdown(void)
 
 void lcd_init_device(void)
 {
-    /* old icx-based players use /dev/fb/0, Hagoromo uses the standard /dev/fb0 */
+    /* old icx-based players use /dev/fb/0, Hagoromo exposes the framebuffer as
+     * the Android-style /dev/graphics/fb0 (confirmed by recon); also try the
+     * plain /dev/fb0 for good measure */
     fb_fd = open("/dev/fb/0", O_RDWR);
+    if(fb_fd < 0)
+        fb_fd = open("/dev/graphics/fb0", O_RDWR);
     if(fb_fd < 0)
         fb_fd = open("/dev/fb0", O_RDWR);
     if(fb_fd < 0)
@@ -227,14 +255,24 @@ void lcd_init_device(void)
     nwz_fb_set_standard_mode();
     /* on plain fbdev devices, find the sysfs backlight interface */
     if(nwz_fb_type == FB_OTHER)
+    {
+        nwz_vinfo = vinfo;
         find_sysfs_backlight();
+    }
 }
 
 static void redraw(void)
 {
-    /* on plain fbdev the data is already in the visible framebuffer */
     if(nwz_fb_type == FB_OTHER)
+    {
+        /* the data is already in the visible framebuffer, but mtkfb does not
+         * refresh the panel on plain writes, so pan to the (unchanged) origin
+         * to force it to push the frame to the display */
+        nwz_vinfo.xoffset = 0;
+        nwz_vinfo.yoffset = 0;
+        ioctl(fb_fd, FBIOPAN_DISPLAY, &nwz_vinfo);
         return;
+    }
     nwz_fb_set_page(0);
 }
 

@@ -31,9 +31,13 @@
 /* define this if the target has volume keys which can be used in the lists */
 #define HAVE_VOLUME_IN_LIST
 
+/* most icx-based players have a 16-bit RGB565 framebuffer, but the newer
+ * Hagoromo platform (NW-A30) uses a 32-bit one, so let the target override */
+#ifndef LCD_DEPTH
 #define LCD_DEPTH  16
 /* Check that but should not matter */
 #define LCD_PIXELFORMAT RGB565
+#endif
 
 #define HAVE_BACKLIGHT
 #define HAVE_BACKLIGHT_BRIGHTNESS

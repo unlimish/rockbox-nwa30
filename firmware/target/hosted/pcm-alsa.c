@@ -60,9 +60,15 @@
 
 /* plughw:0,0 works with both, however "default" is recommended.
  * default doesnt seem to work with async callback but doesn't break
- * with multple applications running */
+ * with multple applications running.
+ * A target can override this: e.g. the Sony NW-A30's standard PCM playback
+ * device is card 0 device 1 (device 0 is the hi-res only output). */
+#ifndef DEFAULT_PLAYBACK_DEVICE
 #define DEFAULT_PLAYBACK_DEVICE "plughw:0,0"
+#endif
+#ifndef DEFAULT_CAPTURE_DEVICE
 #define DEFAULT_CAPTURE_DEVICE "default"
+#endif
 
 #if MIX_FRAME_SAMPLES < 512
 #error "MIX_FRAME_SAMPLES needs to be at least 512!"
