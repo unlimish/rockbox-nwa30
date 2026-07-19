@@ -24,8 +24,13 @@ endif #bootloader
 ifneq (,$(findstring bootloader,$(APPSDIR)))
 
 # We install a second font along the bootloader because sysfont is too small
-# for our purpose
+# for our purpose. The NW-A30 screen is 480x800 at ~300 dpi, where even 27px is
+# only about 2mm tall, so give it a bigger one.
+ifeq ($(MODELNAME),sonynwa30)
+BL_FONT = $(ROOTDIR)/fonts/35-Adobe-Helvetica.bdf
+else
 BL_FONT = $(ROOTDIR)/fonts/27-Adobe-Helvetica.bdf
+endif
 
 # Limits for the bootloader sysfont: ASCII
 BL_MAXCHAR = 127

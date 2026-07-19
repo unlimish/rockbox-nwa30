@@ -72,8 +72,22 @@
 #define BUTTON_FF   BUTTON_RIGHT
 #endif
 
-/* buffer for Sony image, filled from NVP */
-unsigned short sonyicon[ICON_WIDTH * ICON_HEIGHT];
+/* Buffer for the Sony image, filled from NVP. The image stored in NVP is
+ * RGB565 but this is drawn as FORMAT_NATIVE, so it has to be kept in whatever
+ * the LCD uses (the NW-A30 is a 32-bit target, where assuming RGB565 here used
+ * to overrun this buffer by a factor of two). */
+fb_data sonyicon[ICON_WIDTH * ICON_HEIGHT];
+
+/* convert one RGB565 pixel, as stored in NVP, to the native format
+ * (FB_RGBPACK copes with fb_data being a struct on 32-bit targets) */
+static inline fb_data rgb565_to_native(unsigned short v)
+{
+    unsigned r = (v >> 11) & 0x1f;
+    unsigned g = (v >> 5) & 0x3f;
+    unsigned b = v & 0x1f;
+    /* replicate the high bits so that white stays white */
+    return FB_RGBPACK((r << 3) | (r >> 2), (g << 2) | (g >> 4), (b << 3) | (b >> 2));
+}
 const struct bitmap bm_sonyicon =
 {
     .width = ICON_WIDTH,
@@ -92,7 +106,11 @@ int get_icon_y(void)
     else if(LCD_HEIGHT == 400)
         return 100;
     else
-        return LCD_HEIGHT / 2 - ICON_HEIGHT + 30; /* guess, probably won't work */
+        /* Both values above put the centre of the icon at about 41% of the
+         * screen height, which leaves room for the description and the timeout
+         * line underneath. Keep those proportions on taller screens such as
+         * the NW-A30's 800px one, where the old guess drifted too low. */
+        return LCD_HEIGHT * 41 / 100 - ICON_HEIGHT / 2;
 }
 
 /* Sony logo extraction */
@@ -102,17 +120,34 @@ bool extract_sony_logo(void)
     int bti_size = nwz_nvp_read(NWZ_NVP_BTI, NULL);
     if(bti_size < 0)
         return false;
-    unsigned short *bti = malloc(bti_size);
-    if(nwz_nvp_read(NWZ_NVP_BTI, bti) != bti_size)
-        return false;
     /* compute the offset in the image of the logo itself */
     int x_off = (LCD_WIDTH - ICON_WIDTH) / 2; /* logo is centered horizontally */
     int y_off = get_icon_y();
-    /* extract part of the image */
+    /* The image is a full screen RGB565 picture. Make sure it really is big
+     * enough for the region we are about to copy out of it, rather than
+     * reading past the end of the buffer if this device stores something else
+     * (or something smaller) in that node. */
+    size_t needed = (size_t)LCD_WIDTH * (y_off + ICON_HEIGHT) * sizeof(unsigned short);
+    if((size_t)bti_size < needed)
+    {
+        printf("nvp boot image is too small (%d bytes, need %zu)\n", bti_size, needed);
+        return false;
+    }
+    unsigned short *bti = malloc(bti_size);
+    if(bti == NULL)
+        return false;
+    if(nwz_nvp_read(NWZ_NVP_BTI, bti) != bti_size)
+    {
+        free(bti);
+        return false;
+    }
+    /* extract part of the image, converting to the native pixel format */
     for(int y = 0; y < ICON_HEIGHT; y++)
     {
-        memcpy(sonyicon + ICON_WIDTH * y,
-            bti + LCD_WIDTH * (y + y_off) + x_off, ICON_WIDTH * sizeof(unsigned short));
+        const unsigned short *src = bti + LCD_WIDTH * (y + y_off) + x_off;
+        fb_data *dst = sonyicon + ICON_WIDTH * y;
+        for(int x = 0; x < ICON_WIDTH; x++)
+            dst[x] = rgb565_to_native(src[x]);
     }
     free(bti);
     return true;
@@ -286,9 +321,11 @@ void error_screen(const char *msg)
 
 void create_sony_logo(void)
 {
+    /* nothing better to show than a placeholder, but at least make it a
+     * native-format one instead of a hardcoded RGB565 value */
     for(int y = 0; y < ICON_HEIGHT; y++)
         for(int x = 0; x < ICON_WIDTH; x++)
-            sonyicon[y * ICON_WIDTH + x] = 0xf81f;
+            sonyicon[y * ICON_WIDTH + x] = FB_RGBPACK(255, 0, 255);
 }
 
 int choice_screen(const char *title, bool center, int nr_choices, const char *choices[])
@@ -484,10 +521,26 @@ int main(int argc, char **argv)
     button_init();
     backlight_init();
     backlight_set_brightness(DEFAULT_BRIGHTNESS_SETTING);
-    /* try to load the extra font we install on the device */
-    int font_id = font_load("/usr/local/share/rockbox/bootloader.fnt");
-    if(font_id >= 0)
-        lcd_setfont(font_id);
+    /* Try to load the extra font we install on the device: sysfont is far too
+     * small to be readable, especially on the high-dpi screens. The icx players
+     * get it installed into the root filesystem, but that is read-only (and has
+     * no /usr/local at all) on the Hagoromo platform, so there we ship it in
+     * .rockbox on the user partition instead. */
+    static const char *font_paths[] =
+    {
+        "/usr/local/share/rockbox/bootloader.fnt",
+        "/contents/.rockbox/bootloader.fnt",
+    };
+    for(unsigned i = 0; i < sizeof(font_paths) / sizeof(font_paths[0]); i++)
+    {
+        int font_id = font_load(font_paths[i]);
+        if(font_id >= 0)
+        {
+            printf("loaded font %s\n", font_paths[i]);
+            lcd_setfont(font_id);
+            break;
+        }
+    }
     /* extract logo */
     if(!extract_sony_logo())
         create_sony_logo();
