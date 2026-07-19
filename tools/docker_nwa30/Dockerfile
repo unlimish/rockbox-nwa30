@@ -1,5 +1,9 @@
-# Rockbox ARM Linux (sonynwz) toolchain + build environment
-# Builds the arm-rockbox-linux-gnueabi gcc 9.5.0 toolchain via rockboxdev.sh
+# Rockbox ARM Linux (sonynwz) toolchain + build environment.
+# Builds both gcc 9.5.0 cross toolchains via rockboxdev.sh:
+#   - arm-rockbox-linux-gnueabi (soft-float, older icx-based NWZ players)
+#   - arm-rockbox-linux-gnueabihf (hard-float, NW-A30 "Hagoromo" and later)
+# Build from the repository root (the COPY paths below depend on it):
+#   docker build -f tools/docker_nwa30/Dockerfile -t rockbox-nwa30 .
 FROM debian:12
 
 ENV DEBIAN_FRONTEND=noninteractive

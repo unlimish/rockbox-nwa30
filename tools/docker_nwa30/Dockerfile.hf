@@ -1,7 +1,8 @@
 # Incremental build: adds the hard-float ARMv7 toolchain (Sony NW-A30) on top
 # of the existing rockbox-nwa30 image, so the soft-float toolchain does not have
-# to be rebuilt from scratch. build/Dockerfile is the equivalent recipe from
-# scratch; this one only exists to save ~40 minutes locally.
+# to be rebuilt from scratch. The Dockerfile next to this one is the equivalent
+# recipe from scratch; this one only exists to save ~40 minutes locally.
+# Build from the repository root (the COPY paths below depend on it):
 #   docker build -f tools/docker_nwa30/Dockerfile.hf -t rockbox-nwa30:hf .
 FROM rockbox-nwa30:latest
 

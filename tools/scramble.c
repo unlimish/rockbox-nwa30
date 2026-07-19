@@ -105,7 +105,7 @@ void usage(void)
            "\t                   747p, x777, nn2g, m244, cli+, fuz2, hd20, hd30,\n"
            "\t                   ip6g, rk27, clzp, zxf2, zxf3, fuz+, e370, e360,\n"
            "\t                   zxfi, zmoz, zen, zenv, zxfs, e450, e460,\n"
-            "\t                   e470, e580, a10, a20, a30, a860, s750, e350, xdx3,\n"
+           "\t                   e470, e580, a10, a20, a30, a860, s750, e350, xdx3,\n"
            "\t                   nn3g, nn4g)\n");
     printf("\nNo option results in nothing being done.\n");
 

@@ -49,7 +49,7 @@ fi
 mkdir -p /system
 for fs in ext4 ext3 ext2
 do
-    if mount -t $fs "$SYSTEM_PART" /system
+    if mount -t "$fs" "$SYSTEM_PART" /system
     then
         we_mounted_system=1
         break

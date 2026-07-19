@@ -1,5 +1,5 @@
 /***************************************************************************
- *             __________               __   ___
+ *             __________               __   ___.
  *   Open      \______   \ ____   ____ |  | _\_ |__   _______  ___
  *   Source     |       _//  _ \_/ ___\|  |/ /| __ \ /  _ \  \/  /
  *   Jukebox    |    |   (  <_> )  \___|    < | \_\ (  <_> > <  <
@@ -63,7 +63,9 @@ int button_map(int keycode)
         case BTN_TOUCH:
             return BUTTON_TOUCH;
         case KEY_POWER:
-            /* handled as the power button, not a navigation key */
+            /* deliberately ignored: mapping it to a navigation bit could
+             * trigger unwanted actions, and software poweroff already works
+             * by holding POWEROFF_BUTTON (BACK) */
             return 0;
         default:
             printf("button: unmapped keycode %d (0x%x)\n", keycode, keycode);

@@ -68,8 +68,9 @@ bool headphones_inserted(void);
 
 /* The keypad on this player reports HOME, END, VOLUMEUP, VOLUMEDOWN, POWER,
  * MENU, BACK and three Sony-specific codes, and none of them has been
- * identified as the hold switch. Until one is, button_hold() below always
- * reports "not held", which is the safe answer: it never locks the player out.
+ * identified as the hold switch. Until one is, button_hold() (implemented in
+ * button-nwa30.c) always reports "not held", which is the safe answer: it
+ * never locks the player out.
  * Wiring it up later only needs BUTTON_HOLD_KEYCODE defined here, which
  * button-devinput.c already knows how to track. */
 #endif

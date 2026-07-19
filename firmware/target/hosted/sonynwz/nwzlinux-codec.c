@@ -379,8 +379,9 @@ void audiohw_preinit(void)
     /* make sure the tuner passthrough is not mixed into playback */
     audiohw_set_playback_src(NWZ_PLAYBACK);
     /* Keep the hardware "master volume" at its maximum and do the actual
-     * attenuation digitally, see audiohw_set_volume(). The control range is
-     * not documented, so ask the driver for it instead of assuming 0-120. */
+     * attenuation digitally, see audiohw_set_volume(). Whether the control is
+     * mono or stereo is not documented, so ask the driver how many values it
+     * takes instead of assuming. */
     if(alsa_has_control("master volume"))
     {
         int vol_cnt;
@@ -441,6 +442,7 @@ void audiohw_postinit(void)
 {
 }
 
+#ifndef SONY_NWA30 /* the NW-A30 volume path is purely digital, see below */
 /* volume must be driver unit */
 static void nwz_set_driver_vol(int vol)
 {
@@ -453,6 +455,7 @@ static void nwz_set_driver_vol(int vol)
     alsa_controls_get_info("Playback Volume", &vol_cnt);
     alsa_controls_set_ints("Playback Volume", vol_cnt, vols);
 }
+#endif /* !SONY_NWA30 */
 
 /* volume is in tenth-dB */
 void audiohw_set_volume(int vol_l, int vol_r)
