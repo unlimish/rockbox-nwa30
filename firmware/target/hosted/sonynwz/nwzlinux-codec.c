@@ -335,6 +335,24 @@ void audiohw_enable_cuerev(bool en)
 #endif
 }
 
+#ifdef SONY_NWA30
+/* Set a boolean control only if it exists. audiohw_preinit() (and hence this)
+ * runs during boot, before any UI is shown, and alsa_controls_set_bool()
+ * panics if the named control is missing. The A30 control names come from the
+ * device kernel/OF but could not be re-checked at the ALSA layer during recon
+ * (amixer was unavailable in the update environment), so a single wrong name
+ * would otherwise turn into a boot-blocking panic. Skipping a missing control
+ * at worst leaves audio muted, which is recoverable; it never changes
+ * behaviour when the control is present. */
+static void nwa30_set_bool_if_present(const char *name, bool val)
+{
+    if(alsa_has_control(name))
+        alsa_controls_set_bool(name, val);
+    else
+        printf("audio: mixer control '%s' not found, skipping\n", name);
+}
+#endif
+
 void audiohw_set_playback_src(enum nwz_src_t src)
 {
 #ifdef SONY_NWA30
@@ -345,14 +363,14 @@ void audiohw_set_playback_src(enum nwz_src_t src)
     switch(src)
     {
         case NWZ_RADIO:
-            alsa_controls_set_bool("analog input device", true);
-            alsa_controls_set_bool("analog playback mute", false);
+            nwa30_set_bool_if_present("analog input device", true);
+            nwa30_set_bool_if_present("analog playback mute", false);
             break;
         case NWZ_MIC: /* not wired up on this platform */
         case NWZ_PLAYBACK:
         default:
-            alsa_controls_set_bool("analog input device", false);
-            alsa_controls_set_bool("analog playback mute", true);
+            nwa30_set_bool_if_present("analog input device", false);
+            nwa30_set_bool_if_present("analog playback mute", true);
             break;
     }
 #else
@@ -375,7 +393,7 @@ void audiohw_preinit(void)
      * Note that "playback mute" is the digital (PCM) path, which is the one we
      * care about: "analog playback mute" belongs to the analog input used for
      * the tuner and is handled in audiohw_set_playback_src(). */
-    alsa_controls_set_bool("playback mute", false);
+    nwa30_set_bool_if_present("playback mute", false);
     /* make sure the tuner passthrough is not mixed into playback */
     audiohw_set_playback_src(NWZ_PLAYBACK);
     /* Keep the hardware "master volume" at its maximum and do the actual

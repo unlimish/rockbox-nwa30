@@ -20,6 +20,7 @@
 
 #include "adc.h"
 #include "adc-target.h"
+#include <stdio.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -43,6 +44,12 @@ static const char *nwz_adc_channel_name[NWZ_ADC_MAX_CHAN + 1] =
 void adc_init(void)
 {
     adc_fd = open(NWZ_ADC_DEV, O_RDONLY);
+    /* Not fatal: the Hagoromo platform (NW-A30) has no /dev/icx_adc, so adc_read()
+     * simply returns 0 there. Battery voltage does not come from the ADC anyway
+     * (see powermgmt-nwz.c), so this only disables the raw ADC debug channels.
+     * Log it so the absence is visible during bring-up. */
+    if(adc_fd < 0)
+        printf("adc: cannot open %s, ADC channels unavailable\n", NWZ_ADC_DEV);
 }
 
 unsigned short adc_read(int channel)

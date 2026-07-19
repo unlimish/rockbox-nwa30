@@ -27,6 +27,7 @@
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <string.h>
+#include <stdio.h>
 #include <sys/reboot.h>
 
 static int power_fd = -1; /* file descriptor */
@@ -34,6 +35,14 @@ static int power_fd = -1; /* file descriptor */
 void power_init(void)
 {
     power_fd = open(NWZ_POWER_DEV, O_RDWR);
+    /* Not fatal: the Hagoromo platform (NW-A30) does not expose /dev/icx_power.
+     * Every nwz_power_get_*() below already returns -1 when power_fd < 0, and
+     * powermgmt-nwz.c turns that into safe defaults (no external power, nominal
+     * battery) rather than powering the device off. Log it so a genuinely
+     * missing driver is distinguishable from a real power state in the log. */
+    if(power_fd < 0)
+        printf("power: cannot open %s, using safe power/battery defaults\n",
+            NWZ_POWER_DEV);
 }
 
 void power_close(void)
