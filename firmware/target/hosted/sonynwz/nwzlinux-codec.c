@@ -386,7 +386,18 @@ void audiohw_set_playback_src(enum nwz_src_t src)
 
 void audiohw_preinit(void)
 {
+#ifdef SONY_NWA30
+    /* Use the raw "hw:0" control interface rather than "default": this runs
+     * during boot and alsa_controls_init() panics if the device cannot be
+     * opened. "default" is resolved through the alsa-lib configuration files
+     * (/usr/share/alsa), which may be absent on this player, whereas "hw" is
+     * built into alsa-lib and always opens as long as the card exists (it does,
+     * card 0 "sonysoccard", confirmed by recon). Functionally identical for
+     * enumerating and setting controls. */
+    alsa_controls_init("hw:0");
+#else
     alsa_controls_init("default");
+#endif
 #ifdef SONY_NWA30
     /* The Hagoromo platform (CXD3778GF) has its own set of controls; the names
      * used here were all confirmed to exist in the device's own kernel.

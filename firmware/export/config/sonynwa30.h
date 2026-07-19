@@ -40,8 +40,18 @@
 
 /* The CXD3778GF exposes several PCM devices; the normal (non-hi-res) music
  * playback path is card 0 device 1 (cxd3778gf-standard), confirmed by recon.
- * Device 0 is the hi-res-only output. */
-#define DEFAULT_PLAYBACK_DEVICE "plughw:0,1"
+ * Device 0 is the hi-res-only output.
+ *
+ * Use the raw "hw" device instead of "plughw": snd_pcm_open() is called during
+ * boot (pcm_init -> sink_dma_init) and panics on failure, and "plughw" is
+ * resolved through the alsa-lib configuration (/usr/share/alsa) which may not
+ * be present on this player. "hw" is built into alsa-lib and opens without any
+ * config as long as the device node exists (pcmC0D1p, confirmed by recon). The
+ * trade-off is that "hw" does no automatic format conversion, so if the codec
+ * refuses Rockbox's format the audio may be wrong until the format is matched -
+ * but set_hwparams() failures are non-fatal, so the player still boots. */
+#define DEFAULT_PLAYBACK_DEVICE "hw:0,1"
+#define DEFAULT_CAPTURE_DEVICE  "hw:0,1"
 
 #include "sonynwzlinux.h"
 
