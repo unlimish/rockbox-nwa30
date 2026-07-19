@@ -71,11 +71,18 @@ int button_map(int keycode)
     }
 }
 
+/* The hold switch is not identified on this player yet (see button-target.h),
+ * so report the player as never held rather than guessing at a keycode. */
+bool button_hold(void)
+{
+    return false;
+}
+
 /* called by power-nwz.c after a suspend cycle: events generated while
- * suspended are lost, so re-read the hold switch state */
+ * suspended are lost and would have to be re-read here. There is nothing to
+ * reload while the hold switch is unknown. */
 void nwz_button_reload_after_suspend(void)
 {
-    button_reload_hold_status();
 }
 
 bool headphones_inserted(void)

@@ -24,6 +24,7 @@
 #include <string.h>
 #include <errno.h>
 #include <dirent.h>
+#include <limits.h>
 #include <linux/fb.h>
 #include <sys/mman.h>
 #include <sys/ioctl.h>
@@ -101,7 +102,8 @@ static void find_sysfs_backlight(void)
         struct dirent *entry;
         while((entry = readdir(dir)))
         {
-            char path[96];
+            /* big enough for the prefix plus any name readdir can return */
+            char path[sizeof("/sys/class/backlight/") + NAME_MAX];
             if(entry->d_name[0] == '.')
                 continue;
             snprintf(path, sizeof(path), "/sys/class/backlight/%s", entry->d_name);
@@ -281,12 +283,23 @@ static void redraw(void)
 {
     if(nwz_fb_type == FB_OTHER)
     {
-        /* the data is already in the visible framebuffer, but mtkfb does not
-         * refresh the panel on plain writes, so pan to the (unchanged) origin
-         * to force it to push the frame to the display */
+        /* The data is already in the visible framebuffer, but mtkfb does not
+         * necessarily refresh the panel on plain writes, so pan to the
+         * (unchanged) origin to ask it to push the frame to the display.
+         * If the screen ever stays blank while the rest of the log looks
+         * healthy, this is the thing to question: the driver may want a real
+         * change of yoffset, i.e. drawing into alternating frames of the
+         * virtual framebuffer instead of always into the first one. */
+        static int pan_logged = 0;
         nwz_vinfo.xoffset = 0;
         nwz_vinfo.yoffset = 0;
-        ioctl(fb_fd, FBIOPAN_DISPLAY, &nwz_vinfo);
+        int ret = ioctl(fb_fd, FBIOPAN_DISPLAY, &nwz_vinfo);
+        if(!pan_logged)
+        {
+            pan_logged = 1;
+            printf("lcd: FBIOPAN_DISPLAY %s\n",
+                ret < 0 ? "not supported by this driver" : "ok");
+        }
         return;
     }
     nwz_fb_set_page(0);
