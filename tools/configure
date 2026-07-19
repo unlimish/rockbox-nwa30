@@ -410,6 +410,9 @@ simcc () {
    # the Darwin linker does not support those options
    GLOBAL_LDOPTS=`echo $GLOBAL_LDOPTS | sed -e s/\-Wl,-z,defs//`
    GLOBAL_LDOPTS=`echo $GLOBAL_LDOPTS | sed -e s/\-Wl,-z,noexecstack//`
+   LDOPTS=`echo $LDOPTS | sed -e s/\-Wl,--as-needed//`
+   # an rpath pointing at a location on the player makes no sense here
+   LDOPTS=`echo $LDOPTS | sed -e 's|-Wl,-rpath,/contents/[^ ]*||'`
    # there is no ALSA nor librt on Darwin, the simulator uses SDL instead
    LDOPTS=`echo $LDOPTS | sed -e s/-lasound// -e s/-lrt//`
    ;;
