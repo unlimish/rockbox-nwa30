@@ -37,6 +37,14 @@
 /* This driver handle the Sony linux audio drivers: despite using many differents
  * codecs, it appears that they all share a common interface and common controls. */
 
+#ifdef SONY_NWA30
+/* Value we ask the CXD3778GF "master volume" control for. The OF drives it over
+ * a 0-120 range; the driver clamps to its own maximum, so asking for the top of
+ * that range is enough to take the hardware out of the way and leave the actual
+ * attenuation to the digital volume. */
+#define NWZ_MASTER_VOLUME_MAX   120
+#endif
+
 /* This is the alsa mixer interface exposed by Sony:
 numid=3,iface=MIXER,name='Capture Src Switch'
   ; type=ENUMERATED,access=rw------,values=1,items=4
@@ -330,9 +338,23 @@ void audiohw_enable_cuerev(bool en)
 void audiohw_set_playback_src(enum nwz_src_t src)
 {
 #ifdef SONY_NWA30
-    /* TODO: the Hagoromo platform uses different controls for source
-     * selection, needs to be investigated for FM radio support */
-    (void)src;
+    /* The CXD3778GF has no source multiplexer: PCM playback always goes
+     * through the digital path, while the tuner is an analog input that is
+     * mixed in separately. Enabling it is what the OF does to listen to the
+     * radio (control names confirmed in the device kernel). */
+    switch(src)
+    {
+        case NWZ_RADIO:
+            alsa_controls_set_bool("analog input device", true);
+            alsa_controls_set_bool("analog playback mute", false);
+            break;
+        case NWZ_MIC: /* not wired up on this platform */
+        case NWZ_PLAYBACK:
+        default:
+            alsa_controls_set_bool("analog input device", false);
+            alsa_controls_set_bool("analog playback mute", true);
+            break;
+    }
 #else
     switch(src)
     {
@@ -348,20 +370,29 @@ void audiohw_preinit(void)
 {
     alsa_controls_init("default");
 #ifdef SONY_NWA30
-    /* the Hagoromo platform (CXD3778GF) exposes different ALSA controls.
-     * Just make sure the output is unmuted and the headphone amp is on */
-    alsa_controls_set_bool("analog playback mute", false);
-    alsa_controls_set_bool("headphone amp", true);
-    /* set the hardware "master volume" to its maximum (0-120), the actual
-     * volume is then controlled digitally, see audiohw_set_volume() */
+    /* The Hagoromo platform (CXD3778GF) has its own set of controls; the names
+     * used here were all confirmed to exist in the device's own kernel.
+     * Note that "playback mute" is the digital (PCM) path, which is the one we
+     * care about: "analog playback mute" belongs to the analog input used for
+     * the tuner and is handled in audiohw_set_playback_src(). */
+    alsa_controls_set_bool("playback mute", false);
+    /* make sure the tuner passthrough is not mixed into playback */
+    audiohw_set_playback_src(NWZ_PLAYBACK);
+    /* Keep the hardware "master volume" at its maximum and do the actual
+     * attenuation digitally, see audiohw_set_volume(). The control range is
+     * not documented, so ask the driver for it instead of assuming 0-120. */
     if(alsa_has_control("master volume"))
     {
-        long vols[2] = {120, 120};
         int vol_cnt;
         alsa_controls_get_info("master volume", &vol_cnt);
-        alsa_controls_set_ints("master volume", vol_cnt, vols);
+        if(vol_cnt > 0 && vol_cnt <= 2)
+        {
+            long vols[2] = {NWZ_MASTER_VOLUME_MAX, NWZ_MASTER_VOLUME_MAX};
+            alsa_controls_set_ints("master volume", vol_cnt, vols);
+        }
     }
-    /* sample rate */
+    /* the CXD3778GF has no "Sampling Rate" control (checked in the kernel),
+     * this simply leaves has_sample_rate false */
     has_sample_rate = alsa_has_control("Sampling Rate");
 #else
     /* turn on codec */
