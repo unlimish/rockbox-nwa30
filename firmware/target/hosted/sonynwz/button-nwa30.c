@@ -33,14 +33,46 @@
  * POWER(116), MENU(139), BACK(158) plus three Sony-custom codes 211/212/231
  * for the physical transport buttons whose exact assignment still needs to be
  * confirmed on the device - so we map them tentatively and log every keycode
- * we do NOT recognise (goes to /contents/rockbox.log) to make that easy. */
+ * we do NOT recognise (goes to /contents/rockbox.log) to make that easy.
+ *
+ * The player itself only has volume up/down, rew, ff, play/pause and a hold
+ * switch, so most of the ten keycodes the driver advertises are not wired to
+ * anything: the keypad driver is shared with other models. */
 
 /* Sony-custom transport keycodes (not in linux/input.h) - tentative */
 #define NWA30_KEY_A 211
 #define NWA30_KEY_B 212
 #define NWA30_KEY_C 231
 
+/* Report each keycode the player produces, once, so that pressing each button
+ * in turn writes the real layout into /contents/rockbox.log. The keypad driver
+ * advertises ten keycodes but the player only has six controls (volume up and
+ * down, rew, ff, play/pause and the hold switch), so most of what it claims to
+ * support is not wired to anything and the mapping below cannot be derived
+ * from the driver alone. */
+static int button_map_nolog(int keycode);
+
+static void log_keycode_once(int keycode, int button)
+{
+    static int seen[16];
+    static unsigned nr_seen = 0;
+    for(unsigned i = 0; i < nr_seen; i++)
+        if(seen[i] == keycode)
+            return;
+    if(nr_seen < sizeof(seen) / sizeof(seen[0]))
+        seen[nr_seen++] = keycode;
+    printf("button: keycode %d (0x%x) -> %s (0x%x)\n", keycode, keycode,
+        button ? "mapped" : "IGNORED", button);
+}
+
 int button_map(int keycode)
+{
+    int button = button_map_nolog(keycode);
+    log_keycode_once(keycode, button);
+    return button;
+}
+
+static int button_map_nolog(int keycode)
 {
     switch(keycode)
     {
@@ -68,7 +100,7 @@ int button_map(int keycode)
              * by holding POWEROFF_BUTTON (BACK) */
             return 0;
         default:
-            printf("button: unmapped keycode %d (0x%x)\n", keycode, keycode);
+            /* logged by button_map() */
             return 0;
     }
 }

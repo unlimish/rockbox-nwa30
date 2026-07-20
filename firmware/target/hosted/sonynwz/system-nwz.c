@@ -124,6 +124,17 @@ static void nwz_sig_handler(int sig, siginfo_t *siginfo, void *context)
      */
     static bool triggered = false;
 
+    /* SIGTERM is not a fault: it is the system asking us to quit, which it
+     * does on this platform when it wants the player back (to enter USB mass
+     * storage mode, for instance). Showing a backtrace and rebooting for it is
+     * both alarming and wrong, so just leave quietly. */
+    if(sig == SIGTERM)
+    {
+        printf("terminated by the system\n");
+        fflush(stdout);
+        exit(0);
+    }
+
     /* dump process maps to log file to ease debugging
      * will also print crash info to the log */
     dump_proc_map();
@@ -183,8 +194,9 @@ void system_init(void)
     sigaction(SIGFPE, &sa, NULL);
     sigaction(SIGSEGV, &sa, NULL);
     sigaction(SIGPIPE, &sa, NULL);
-    sigaction(SIGTERM, &sa, NULL);
     sigaction(SIGBUS, &sa, NULL);
+    /* not a fault, but we want to leave cleanly rather than be killed
+     * mid-write, see nwz_sig_handler() */
     sigaction(SIGTERM, &sa, NULL);
     compute_kern_mod_list();
     print_kern_mod_list();

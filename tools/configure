@@ -3688,9 +3688,13 @@ fi
     uname=`uname`
     sonynwahfcc
     # We cannot rely on the stock /system having a compatible libasound, so we
-    # ship our own in .rockbox/lib and look for it there first (harmless if the
-    # system provides one too). Absolute path so the bootloader finds it as well.
-    LDOPTS="$LDOPTS -Wl,-rpath,/contents/.rockbox/lib"
+    # ship our own in .rockbox/lib and look for it there (harmless if the system
+    # provides one too). Absolute path so the bootloader finds it as well.
+    # Use new dtags so this becomes DT_RUNPATH rather than DT_RPATH: the player
+    # may not let us map libraries off the user partition, in which case the
+    # bootloader stages copies elsewhere and points LD_LIBRARY_PATH at them,
+    # and only DT_RUNPATH is searched *after* LD_LIBRARY_PATH.
+    LDOPTS="$LDOPTS -Wl,--enable-new-dtags -Wl,-rpath,/contents/.rockbox/lib"
     ;;
 
    228|sonynwza860)

@@ -41,6 +41,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <dirent.h>
+#include <limits.h>
 #include <sys/wait.h>
 #include <stdarg.h>
 #include "version.h"
@@ -111,6 +112,111 @@ int get_icon_y(void)
          * line underneath. Keep those proportions on taller screens such as
          * the NW-A30's 800px one, where the old guess drifted too low. */
         return LCD_HEIGHT * 41 / 100 - ICON_HEIGHT / 2;
+}
+
+#define ROCKBOX_BIN     "/contents/.rockbox/rockbox.sony"
+#define ROCKBOX_LIB_DIR "/contents/.rockbox/lib"
+/* Staging area on a filesystem we are allowed to execute from, see
+ * boot_rockbox(). /tmp is a 32MB tmpfs on this platform. */
+#define STAGE_DIR       "/tmp/rockbox"
+
+/* copy a file, giving the copy the requested mode. Returns true on success. */
+static bool copy_file(const char *src, const char *dst, mode_t mode)
+{
+    int in = open(src, O_RDONLY);
+    if(in < 0)
+        return false;
+    int out = open(dst, O_WRONLY | O_CREAT | O_TRUNC, mode);
+    if(out < 0)
+    {
+        close(in);
+        return false;
+    }
+    bool ok = true;
+    char buf[16384];
+    ssize_t len;
+    while((len = read(in, buf, sizeof(buf))) > 0)
+    {
+        ssize_t off = 0;
+        while(off < len)
+        {
+            ssize_t wr = write(out, buf + off, len - off);
+            if(wr <= 0)
+            {
+                ok = false;
+                break;
+            }
+            off += wr;
+        }
+        if(!ok)
+            break;
+    }
+    if(len < 0)
+        ok = false;
+    /* the mode given to open() is masked by the umask, so be explicit */
+    if(ok && fchmod(out, mode) < 0)
+        ok = false;
+    if(close(out) < 0)
+        ok = false;
+    close(in);
+    if(!ok)
+        unlink(dst);
+    return ok;
+}
+
+/* Copy everything Rockbox needs to run into STAGE_DIR and run it from there.
+ *
+ * The user partition holding .rockbox is a FAT filesystem that this platform
+ * does not let us execute from: exec'ing rockbox.sony off it fails with
+ * EACCES, and if it is mounted noexec then mapping our bundled libasound out
+ * of it would fail as well. /tmp is a tmpfs we can both write to and execute
+ * from, so stage the binary (and the libraries next to it) there.
+ *
+ * Falls back to running it in place, which is what the icx players do and
+ * costs nothing to try. Returns only if the player could not be started. */
+static void boot_rockbox(void)
+{
+    static const char *argv0 = "rockbox.sony";
+    char path[64];
+
+    mkdir(STAGE_DIR, 0755);
+    snprintf(path, sizeof(path), "%s/%s", STAGE_DIR, argv0);
+    if(copy_file(ROCKBOX_BIN, path, 0755))
+    {
+        /* Bring along the libraries we ship next to it: the binary looks for
+         * them by absolute path on the user partition, which may be just as
+         * unusable, so point the loader at the copies instead. */
+        DIR *dir = opendir(ROCKBOX_LIB_DIR);
+        if(dir != NULL)
+        {
+            struct dirent *entry;
+            while((entry = readdir(dir)))
+            {
+                /* big enough for the prefix plus any name readdir can return */
+                char src[sizeof(ROCKBOX_LIB_DIR) + 1 + NAME_MAX];
+                char dst[sizeof(STAGE_DIR) + 1 + NAME_MAX];
+                if(entry->d_name[0] == '.')
+                    continue;
+                snprintf(src, sizeof(src), "%s/%s", ROCKBOX_LIB_DIR, entry->d_name);
+                snprintf(dst, sizeof(dst), "%s/%s", STAGE_DIR, entry->d_name);
+                if(!copy_file(src, dst, 0755))
+                    printf("cannot stage library %s: %s\n", entry->d_name,
+                        strerror(errno));
+            }
+            closedir(dir);
+        }
+        setenv("LD_LIBRARY_PATH", STAGE_DIR, 1);
+        printf("booting %s\n", path);
+        fflush(stdout);
+        execl(path, argv0, NULL);
+        printf("cannot run %s: %s\n", path, strerror(errno));
+    }
+    else
+        printf("cannot stage %s in %s: %s\n", ROCKBOX_BIN, STAGE_DIR,
+            strerror(errno));
+    /* last resort: run it where it lies */
+    fflush(stdout);
+    execl(ROCKBOX_BIN, argv0, NULL);
 }
 
 /* Sony logo extraction */
@@ -300,10 +406,16 @@ enum boot_mode get_boot_mode(void)
         /* play -> stop loop and return mode */
         if(btn == BUTTON_PLAY)
             break;
-        /* left/right/up/down: change mode */
-        if(btn == BUTTON_LEFT || btn == BUTTON_DOWN || btn == BUTTON_REW)
+        /* left/right/up/down: change mode. The volume keys do the same: they
+         * are the one pair every one of these players is guaranteed to have,
+         * and on a target whose other keycodes are not identified yet they are
+         * the difference between a usable menu and being stuck on whatever
+         * happens to be selected. */
+        if(btn == BUTTON_LEFT || btn == BUTTON_DOWN || btn == BUTTON_REW ||
+           btn == BUTTON_VOL_DOWN)
             mode = (mode + BOOT_COUNT - 1) % BOOT_COUNT;
-        if(btn == BUTTON_RIGHT || btn == BUTTON_UP || btn == BUTTON_FF)
+        if(btn == BUTTON_RIGHT || btn == BUTTON_UP || btn == BUTTON_FF ||
+           btn == BUTTON_VOL_UP)
             mode = (mode + 1) % BOOT_COUNT;
     }
 
@@ -385,10 +497,12 @@ int choice_screen(const char *title, bool center, int nr_choices, const char *ch
             free(buf);
             return btn == BUTTON_PLAY ? choice : -1;
         }
-        /* left/right/up/down: change mode */
-        if(btn == BUTTON_LEFT || btn == BUTTON_UP || btn == BUTTON_REW)
+        /* left/right/up/down: change mode (volume keys too, see get_boot_mode) */
+        if(btn == BUTTON_LEFT || btn == BUTTON_UP || btn == BUTTON_REW ||
+           btn == BUTTON_VOL_DOWN)
             choice = (choice + nr_choices - 1) % nr_choices;
-        if(btn == BUTTON_RIGHT || btn == BUTTON_DOWN || btn == BUTTON_FF)
+        if(btn == BUTTON_RIGHT || btn == BUTTON_DOWN || btn == BUTTON_FF ||
+           btn == BUTTON_VOL_UP)
             choice = (choice + 1) % nr_choices;
     }
 }
@@ -572,7 +686,8 @@ int main(int argc, char **argv)
             * this is neededlessly complicated and we defer this job to the dualboot
             * install script */
             fflush(stdout);
-            execl("/contents/.rockbox/rockbox.sony", "rockbox.sony", NULL);
+            boot_rockbox();
+            /* only reached if the exec failed */
             printf("execvp failed: %s\n", strerror(errno));
             /* fallback to OF in case of failure */
             error_screen("Cannot boot Rockbox");
