@@ -23,33 +23,30 @@
 #include "button.h"
 #include "button-target.h"
 
-/* NW-A30 key layout (Hagoromo platform, confirmed by recon on a real NW-A35):
- *   /dev/input/event0: "mtk-kpd" hardware keypad (transport keys, volume,
- *                      power) - reports the keycodes handled below
- *   /dev/input/event1: "himax-hx8526-icx" capacitive touchscreen (BTN_TOUCH)
- * button-devinput.c reads every device and calls this to translate keycodes.
+/* NW-A30 key layout. The player has volume up and down, rew, ff, play/pause, a
+ * power button and a hold switch. The keycodes below were read off a real
+ * NW-A35 by pressing each button in turn; they are the plain linux ones:
  *
- * The keypad exposes: HOME(102), END(107), VOLUMEDOWN(114), VOLUMEUP(115),
- * POWER(116), MENU(139), BACK(158) plus three Sony-custom codes 211/212/231
- * for the physical transport buttons whose exact assignment still needs to be
- * confirmed on the device - so we map them tentatively and log every keycode
- * we do NOT recognise (goes to /contents/rockbox.log) to make that easy.
+ *   rew        105  KEY_LEFT
+ *   ff         106  KEY_RIGHT
+ *   play/pause  28  KEY_ENTER
+ *   volume up  115  KEY_VOLUMEUP
+ *   volume down     KEY_VOLUMEDOWN
+ *   power           KEY_POWER, assumed: the kernel logs "kpd: Power Key
+ *                   generate" so it comes from the keypad rather than wm_key,
+ *                   but it has not been confirmed on the device yet
  *
- * The player itself only has volume up/down, rew, ff, play/pause and a hold
- * switch, so most of the ten keycodes the driver advertises are not wired to
- * anything: the keypad driver is shared with other models. */
+ * Note that they do NOT match the capability bitmap the keypad advertises in
+ * /proc/bus/input/devices (HOME, END, POWER, MENU, BACK and some Sony-specific
+ * codes): the keys the player actually sends come from a separate driver
+ * (wm_key), so the bitmap is no guide to the layout. Trust this list, which was
+ * measured, over anything derived from that one.
+ *
+ * The touchscreen ("himax-hx8526-icx") reports BTN_TOUCH on its own device;
+ * button-devinput.c reads every device and calls this to translate keycodes. */
 
-/* Sony-custom transport keycodes (not in linux/input.h) - tentative */
-#define NWA30_KEY_A 211
-#define NWA30_KEY_B 212
-#define NWA30_KEY_C 231
-
-/* Report each keycode the player produces, once, so that pressing each button
- * in turn writes the real layout into /contents/rockbox.log. The keypad driver
- * advertises ten keycodes but the player only has six controls (volume up and
- * down, rew, ff, play/pause and the hold switch), so most of what it claims to
- * support is not wired to anything and the mapping below cannot be derived
- * from the driver alone. */
+/* Report each keycode the player produces, once, so that pressing a button that
+ * is not handled here still writes its code to /contents/rockbox.log. */
 static int button_map_nolog(int keycode);
 
 static void log_keycode_once(int keycode, int button)
@@ -80,24 +77,25 @@ static int button_map_nolog(int keycode)
             return BUTTON_VOL_UP;
         case KEY_VOLUMEDOWN:
             return BUTTON_VOL_DOWN;
-        case KEY_HOME:
-        case KEY_BACK:
-            return BUTTON_BACK;
-        case KEY_MENU:
+        case KEY_LEFT:      /* rew */
+            return BUTTON_LEFT;
+        case KEY_RIGHT:     /* ff */
+            return BUTTON_RIGHT;
+        case KEY_ENTER:     /* play/pause */
             return BUTTON_PLAY;
-        /* tentative transport mapping, refine once confirmed on device */
-        case NWA30_KEY_A:
-            return BUTTON_LEFT;  /* guess: previous */
-        case NWA30_KEY_B:
-            return BUTTON_RIGHT; /* guess: next */
-        case NWA30_KEY_C:
-            return BUTTON_PLAY;  /* guess: play/pause */
         case BTN_TOUCH:
             return BUTTON_TOUCH;
+        /* The power button is the only one left, and this player has nothing
+         * else to go back or up with (the touchscreen does the rest), so give
+         * it BUTTON_BACK. That also makes it power the player off when held,
+         * since POWEROFF_BUTTON is BUTTON_BACK on this keypad. */
         case KEY_POWER:
-            /* deliberately ignored: mapping it to a navigation bit could
-             * trigger unwanted actions, and software poweroff already works
-             * by holding POWEROFF_BUTTON (BACK) */
+            return BUTTON_BACK;
+        /* No button sends these, but the keypad claims to support them, so
+         * make sure a stray event cannot trigger anything. */
+        case KEY_HOME:
+        case KEY_BACK:
+        case KEY_MENU:
             return 0;
         default:
             /* logged by button_map() */

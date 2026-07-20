@@ -3674,7 +3674,9 @@ fi
     target="SONY_NWA30"
     memory=32
     bmp2rb_mono="$rootdir/tools/bmp2rb -f 0"
-    bmp2rb_native="$rootdir/tools/bmp2rb -f 4"
+    # 32-bit XRGB, to match LCD_DEPTH 32: generating 16-bit bitmaps here and
+    # drawing them as FORMAT_NATIVE reads twice the data that is there
+    bmp2rb_native="$rootdir/tools/bmp2rb -f 10"
     tool="cp"
     output="rockbox.sony"
     boottool="$rootdir/tools/scramble -add=a30"
