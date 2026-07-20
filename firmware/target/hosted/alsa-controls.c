@@ -20,6 +20,7 @@
 #include "alsa-controls.h"
 #include "panic.h"
 #include "debug.h"
+#include <stdio.h>
 #include <stdlib.h>
 
 /* alsa control handle, we keep it open at all times */
@@ -38,7 +39,7 @@ static struct ctl_t
     const char **enum_name; /* names of the enum, indexed by ALSA index */
 } *alsa_ctl_info;
 
-#if defined(DEBUG)
+/* also used by alsa_controls_dump(), so not limited to debug builds */
 static const char *alsa_ctl_type_name(snd_ctl_elem_type_t type)
 {
     switch(type)
@@ -49,7 +50,6 @@ static const char *alsa_ctl_type_name(snd_ctl_elem_type_t type)
         default: return "???";
     }
 }
-#endif
 
 void alsa_controls_init(const char *name)
 {
@@ -137,6 +137,38 @@ int alsa_controls_find(const char *name)
             return i;
     /* not found */
     return -1;
+}
+
+/* Print every control, with its type and (for enumerations) its items. The
+ * same information is written with DEBUGF at init time, but that only reaches
+ * a debug build: this is for bringing up a player whose mixer is not
+ * documented, where it has to end up in the ordinary log. */
+void alsa_controls_dump(void)
+{
+    printf("ALSA controls:\n");
+    for(unsigned i = 0; i < alsa_ctl_count; i++)
+    {
+        printf("- name='%s', type=%s, count=%u\n", alsa_ctl_info[i].name,
+            alsa_ctl_type_name(alsa_ctl_info[i].type), alsa_ctl_info[i].count);
+        if(alsa_ctl_info[i].type == SND_CTL_ELEM_TYPE_ENUMERATED)
+        {
+            printf("  items:");
+            for(unsigned j = 0; j < alsa_ctl_info[i].items; j++)
+                printf("%s '%s'", j == 0 ? "" : ",", alsa_ctl_info[i].enum_name[j]);
+            printf("\n");
+        }
+    }
+}
+
+/* return the type of a control, or SND_CTL_ELEM_TYPE_NONE if there is no such
+ * control. Setting a control with the wrong type is fatal, so a driver that
+ * cannot be sure what a control looks like can ask first. */
+snd_ctl_elem_type_t alsa_controls_get_type(const char *name)
+{
+    int idx = alsa_controls_find(name);
+    if(idx < 0)
+        return SND_CTL_ELEM_TYPE_NONE;
+    return alsa_ctl_info[idx].type;
 }
 
 bool alsa_has_control(const char *name)

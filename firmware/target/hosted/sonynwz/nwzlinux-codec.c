@@ -346,10 +346,14 @@ void audiohw_enable_cuerev(bool en)
  * behaviour when the control is present. */
 static void nwa30_set_bool_if_present(const char *name, bool val)
 {
-    if(alsa_has_control(name))
+    snd_ctl_elem_type_t type = alsa_controls_get_type(name);
+    if(type == SND_CTL_ELEM_TYPE_BOOLEAN)
         alsa_controls_set_bool(name, val);
-    else
+    else if(type == SND_CTL_ELEM_TYPE_NONE)
         printf("audio: mixer control '%s' not found, skipping\n", name);
+    else
+        printf("audio: mixer control '%s' is type %d, not a switch, skipping\n",
+            name, type);
 }
 #endif
 
@@ -358,18 +362,21 @@ void audiohw_set_playback_src(enum nwz_src_t src)
 #ifdef SONY_NWA30
     /* The CXD3778GF has no source multiplexer: PCM playback always goes
      * through the digital path, while the tuner is an analog input that is
-     * mixed in separately. Enabling it is what the OF does to listen to the
-     * radio (control names confirmed in the device kernel). */
+     * mixed in separately, muted by "analog playback mute".
+     *
+     * Which input that is gets picked with "analog input device", but that one
+     * is an enumeration (the device rejected being set as a switch) and we do
+     * not know its values yet, so leave it alone: whatever the system left it
+     * as is fine as long as the analog path stays muted for playback. Reading
+     * the items back is what FM radio support will need. */
     switch(src)
     {
         case NWZ_RADIO:
-            nwa30_set_bool_if_present("analog input device", true);
             nwa30_set_bool_if_present("analog playback mute", false);
             break;
         case NWZ_MIC: /* not wired up on this platform */
         case NWZ_PLAYBACK:
         default:
-            nwa30_set_bool_if_present("analog input device", false);
             nwa30_set_bool_if_present("analog playback mute", true);
             break;
     }
@@ -404,6 +411,10 @@ void audiohw_preinit(void)
      * Note that "playback mute" is the digital (PCM) path, which is the one we
      * care about: "analog playback mute" belongs to the analog input used for
      * the tuner and is handled in audiohw_set_playback_src(). */
+    /* List what this codec actually offers. The names were read out of the
+     * device kernel, but not their types, and setting a control with the wrong
+     * type is fatal - so put the real list in the log to work from. */
+    alsa_controls_dump();
     nwa30_set_bool_if_present("playback mute", false);
     /* make sure the tuner passthrough is not mixed into playback */
     audiohw_set_playback_src(NWZ_PLAYBACK);
@@ -411,7 +422,7 @@ void audiohw_preinit(void)
      * attenuation digitally, see audiohw_set_volume(). Whether the control is
      * mono or stereo is not documented, so ask the driver how many values it
      * takes instead of assuming. */
-    if(alsa_has_control("master volume"))
+    if(alsa_controls_get_type("master volume") == SND_CTL_ELEM_TYPE_INTEGER)
     {
         int vol_cnt;
         alsa_controls_get_info("master volume", &vol_cnt);

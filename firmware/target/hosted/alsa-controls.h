@@ -38,6 +38,10 @@ void alsa_controls_close(void);
 bool alsa_has_control(const char *name);
 /* find a control element ID by name, return -1 of not found or index into array */
 int alsa_controls_find(const char *name);
+/* return the type of a control, SND_CTL_ELEM_TYPE_NONE if there is no such one */
+snd_ctl_elem_type_t alsa_controls_get_type(const char *name);
+/* print every control with its type and enum items, for bring-up */
+void alsa_controls_dump(void);
 /* find a control element enum index by name, return -1 if not found */
 int alsa_controls_find_enum(const char *name, const char *enum_name);
 /* set a control, potentially supports several values */
