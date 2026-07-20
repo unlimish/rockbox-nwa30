@@ -66,13 +66,13 @@ bool headphones_inserted(void);
  * stripped from the bitmap by the driver (must not clash with real buttons) */
 #define BUTTON_TOUCH                0x00008000
 
-/* The keypad on this player reports HOME, END, VOLUMEUP, VOLUMEDOWN, POWER,
- * MENU, BACK and three Sony-specific codes, and none of them has been
- * identified as the hold switch. Until one is, button_hold() (implemented in
- * button-nwa30.c) always reports "not held", which is the safe answer: it
- * never locks the player out.
- * Wiring it up later only needs BUTTON_HOLD_KEYCODE defined here, which
- * button-devinput.c already knows how to track. */
+/* The hold switch is reported as a key rather than a switch, and it uses
+ * KEY_H - confirmed by toggling it on the device. button-devinput.c tracks it
+ * from here and keeps it out of the button bitmap. */
+#define BUTTON_HOLD_KEYCODE         35 /* KEY_H */
+
+/* provided by button-devinput.c: re-read the hold switch state */
+void button_reload_hold_status(void);
 #endif
 
 #else /* SONY_NWZA860 */

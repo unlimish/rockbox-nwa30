@@ -210,6 +210,18 @@ static void boot_rockbox(void)
         fflush(stdout);
         execl(path, argv0, NULL);
         printf("cannot run %s: %s\n", path, strerror(errno));
+        /* ENOENT here does not mean the binary is missing - we just wrote it -
+         * but that its ELF interpreter is. Report enough to tell which. */
+        if(errno == ENOENT)
+        {
+            struct stat st;
+            printf("  staged size: %ld\n",
+                stat(path, &st) == 0 ? (long)st.st_size : -1L);
+            printf("  /lib/ld-linux-armhf.so.3 (hard float): %s\n",
+                access("/lib/ld-linux-armhf.so.3", F_OK) == 0 ? "present" : "MISSING");
+            printf("  /lib/ld-linux.so.3 (soft float): %s\n",
+                access("/lib/ld-linux.so.3", F_OK) == 0 ? "present" : "MISSING");
+        }
     }
     else
         printf("cannot stage %s in %s: %s\n", ROCKBOX_BIN, STAGE_DIR,

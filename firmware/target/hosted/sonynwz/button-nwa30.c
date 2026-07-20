@@ -31,10 +31,11 @@
  *   ff         106  KEY_RIGHT
  *   play/pause  28  KEY_ENTER
  *   volume up  115  KEY_VOLUMEUP
- *   volume down     KEY_VOLUMEDOWN
- *   power           KEY_POWER, assumed: the kernel logs "kpd: Power Key
- *                   generate" so it comes from the keypad rather than wm_key,
- *                   but it has not been confirmed on the device yet
+ *   volume down 114  KEY_VOLUMEDOWN
+ *   power       116  KEY_POWER
+ *   hold         35  KEY_H, reported as a key rather than a switch and
+ *                    handled by button-devinput.c, see button-target.h
+ *   touchscreen 330  BTN_TOUCH, from the touchscreen's own device
  *
  * Note that they do NOT match the capability bitmap the keypad advertises in
  * /proc/bus/input/devices (HOME, END, POWER, MENU, BACK and some Sony-specific
@@ -103,18 +104,13 @@ static int button_map_nolog(int keycode)
     }
 }
 
-/* The hold switch is not identified on this player yet (see button-target.h),
- * so report the player as never held rather than guessing at a keycode. */
-bool button_hold(void)
-{
-    return false;
-}
-
-/* called by power-nwz.c after a suspend cycle: events generated while
- * suspended are lost and would have to be re-read here. There is nothing to
- * reload while the hold switch is unknown. */
+/* button_hold() comes from button-devinput.c, which tracks BUTTON_HOLD_KEYCODE.
+ *
+ * called by power-nwz.c after a suspend cycle: no event is generated for a
+ * switch that was toggled while we were not listening, so re-read it */
 void nwz_button_reload_after_suspend(void)
 {
+    button_reload_hold_status();
 }
 
 bool headphones_inserted(void)
