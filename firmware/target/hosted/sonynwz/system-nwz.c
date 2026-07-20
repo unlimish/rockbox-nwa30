@@ -91,16 +91,14 @@ static void print_kern_mod_list(void)
         printf("  %s\n", *p++);
 }
 
-/* List the other processes running alongside us. We run in place of the stock
- * application, but the rest of the stock userspace keeps running - one of those
- * is what keeps drawing over our screen - so log what is there to work out
- * which one, and whether it needs stopping. */
-static void print_proc_list(void)
+/* Walk /proc: for every process, call fn(pid, cmdline). We run in place of the
+ * stock application while the rest of the stock userspace keeps running, so
+ * this is how we find both what to log and what to stop. */
+static void for_each_process(void (*fn)(int pid, const char *cmdline))
 {
     DIR *proc = opendir("/proc");
     if(proc == NULL)
         return;
-    printf("Processes:\n");
     struct dirent *entry;
     while((entry = readdir(proc)))
     {
@@ -122,9 +120,32 @@ static void print_proc_list(void)
             if(cmd[i] == 0)
                 cmd[i] = ' ';
         cmd[n] = 0;
-        printf("  %5s %s\n", entry->d_name, cmd);
+        fn(atoi(entry->d_name), cmd);
     }
     closedir(proc);
+}
+
+static void print_one_process(int pid, const char *cmdline)
+{
+    printf("  %5d %s\n", pid, cmdline);
+}
+
+static void print_proc_list(void)
+{
+    printf("Processes:\n");
+    for_each_process(print_one_process);
+}
+
+static void kill_boot_animation(int pid, const char *cmdline)
+{
+    /* The stock boot splash keeps drawing over our screen because nothing told
+     * it boot was done. It is just the animation, so end it the blunt way; the
+     * stock app stops it too. */
+    if(strstr(cmdline, "icx_bootanimation") != NULL)
+    {
+        printf("stopping boot animation (pid %d)\n", pid);
+        kill(pid, SIGKILL);
+    }
 }
 
 /* to make thread-internal.h happy */
@@ -250,6 +271,7 @@ void system_init(void)
     compute_kern_mod_list();
     print_kern_mod_list();
     print_proc_list();
+    for_each_process(kill_boot_animation);
     /* some init not done on hosted targets */
     adc_init();
     power_init();
