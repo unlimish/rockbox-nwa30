@@ -83,10 +83,12 @@ static void load_hold_key_status(void)
         if(keystates[BUTTON_HOLD_KEYCODE / 8] & (1 << (BUTTON_HOLD_KEYCODE % 8)))
         {
             hold_key_status = true;
+            printf("hold: initial state held\n");
             return;
         }
     }
     hold_key_status = false;
+    printf("hold: initial state not held\n");
 }
 
 /* the kernel does not generate an event for a switch toggled while the
@@ -265,6 +267,7 @@ int button_read_device(BDATA)
                             bool new_hold = event.value != 0;
                             if(new_hold != hold_key_status) {
                                 hold_key_status = new_hold;
+                                printf("hold: now %s\n", new_hold ? "held" : "not held");
 #if !defined(BOOTLOADER) && defined(HAVE_BACKLIGHT)
                                 backlight_hold_changed(hold_key_status);
 #endif
@@ -388,8 +391,11 @@ int button_read_device(BDATA)
 #endif
 
 #ifdef BUTTON_HOLD_KEYCODE
-    if(hold_key_status)
-        return 0;
+    /* TODO: the hold switch polarity has not been confirmed on the device yet,
+     * and reading it wrong here silently swallows every button and touch. Until
+     * the log has told us which way round it is, keep tracking and reporting the
+     * state (button_hold(), backlight) but do not let it suppress input, so a
+     * stuck/inverted reading cannot lock the player out. */
 #endif
 
     return btns;

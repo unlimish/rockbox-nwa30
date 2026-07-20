@@ -24,6 +24,7 @@
 #include <ucontext.h>
 #include <string.h>
 #include <stdio.h>
+#include <dirent.h>
 
 #include "system.h"
 #include "lcd.h"
@@ -88,6 +89,42 @@ static void print_kern_mod_list(void)
     const char **p = kern_mod_list;
     while(*p)
         printf("  %s\n", *p++);
+}
+
+/* List the other processes running alongside us. We run in place of the stock
+ * application, but the rest of the stock userspace keeps running - one of those
+ * is what keeps drawing over our screen - so log what is there to work out
+ * which one, and whether it needs stopping. */
+static void print_proc_list(void)
+{
+    DIR *proc = opendir("/proc");
+    if(proc == NULL)
+        return;
+    printf("Processes:\n");
+    struct dirent *entry;
+    while((entry = readdir(proc)))
+    {
+        /* only numeric entries are processes */
+        if(entry->d_name[0] < '1' || entry->d_name[0] > '9')
+            continue;
+        char path[sizeof("/proc//cmdline") + sizeof(entry->d_name)];
+        snprintf(path, sizeof(path), "/proc/%s/cmdline", entry->d_name);
+        FILE *f = fopen(path, "re");
+        if(f == NULL)
+            continue;
+        char cmd[128];
+        size_t n = fread(cmd, 1, sizeof(cmd) - 1, f);
+        fclose(f);
+        if(n == 0)
+            continue; /* kernel thread, no cmdline */
+        /* cmdline is NUL-separated argv, turn the separators into spaces */
+        for(size_t i = 0; i < n; i++)
+            if(cmd[i] == 0)
+                cmd[i] = ' ';
+        cmd[n] = 0;
+        printf("  %5s %s\n", entry->d_name, cmd);
+    }
+    closedir(proc);
 }
 
 /* to make thread-internal.h happy */
@@ -200,6 +237,7 @@ void system_init(void)
     sigaction(SIGTERM, &sa, NULL);
     compute_kern_mod_list();
     print_kern_mod_list();
+    print_proc_list();
     /* some init not done on hosted targets */
     adc_init();
     power_init();
