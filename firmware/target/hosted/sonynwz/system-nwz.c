@@ -232,9 +232,21 @@ void system_init(void)
     sigaction(SIGSEGV, &sa, NULL);
     sigaction(SIGPIPE, &sa, NULL);
     sigaction(SIGBUS, &sa, NULL);
+#ifdef SONY_NWA30
+    /* On this player something in the stock userspace sends us SIGTERM a little
+     * while after we start, whether or not we are being used - the earlier logs
+     * showed "terminated by the system" followed by a restart. That kills the
+     * UI and, because the system restarts the app we replaced, loops. Ignore it
+     * so Rockbox stays up. If it turns out the system then escalates to SIGKILL
+     * we cannot catch that, but the next log will show whether this was enough.
+     * (This does mean we do not hand the player back on a SIGTERM meant to grab
+     * it for USB mode; revisit once we know where the signal comes from.) */
+    signal(SIGTERM, SIG_IGN);
+#else
     /* not a fault, but we want to leave cleanly rather than be killed
      * mid-write, see nwz_sig_handler() */
     sigaction(SIGTERM, &sa, NULL);
+#endif
     compute_kern_mod_list();
     print_kern_mod_list();
     print_proc_list();

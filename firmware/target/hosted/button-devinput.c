@@ -387,6 +387,19 @@ int button_read_device(BDATA)
     if(_last_touch_state == TOUCHSCREEN_STATE_DOWN)
     {
         btns |= touch;
+#ifdef SONY_NWA30
+        /* The touch controller's coordinate range has not been matched to the
+         * screen yet, so touches land in the wrong place. Log the raw values
+         * (throttled) - touching the corners tells us the range to calibrate
+         * against LCD_WIDTH x LCD_HEIGHT. */
+        static long last_log = 0;
+        if(TIME_AFTER(current_tick, last_log + HZ / 4))
+        {
+            last_log = current_tick;
+            printf("touch: raw=%d,%d -> pixel=%d,%d\n",
+                _last_x, _last_y, *data >> 16, *data & 0xffff);
+        }
+#endif
     }
 #endif
 
