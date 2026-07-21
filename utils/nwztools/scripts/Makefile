@@ -81,6 +81,13 @@ install_dualboot: want_target want_exec want_upg
 # On Hagoromo (NW-A30+) the stock updater always extracts file 1 as md5.txt and
 # aborts if it is missing, so every UPG must carry a (dummy) file 1. The dualboot
 # payload is therefore file 2.
+#
+# EXEC must be the bootloader ELF (build/nwa30-boot/bootloader.elf), NOT
+# bootloader-nwa30.sony: on Hagoromo the payload replaces HgrmMediaPlayerApp and
+# is exec'd directly, whereas the .sony file is a scrambled tar for the older
+# icx players' installer. Installing the .sony file gives an app that fails with
+# ENOEXEC before it can log anything - the player just sits on the boot animation
+# and reboots, with no clue as to why.
 install_dualboot_hagoromo: want_target want_exec want_upg
 	$(call UPGPACK, install_dualboot_hagoromo.sh hagoromo_md5.txt $(EXEC))
 
