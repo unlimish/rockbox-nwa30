@@ -47,8 +47,17 @@
 static const char **kern_mod_list;
 bool os_file_exists(const char *ospath);
 
+int nwz_power_shutdown(void);
+
 void power_off(void)
 {
+#ifdef SONY_NWA30
+    /* On the icx players Rockbox runs alongside the OF and just exits back to
+     * it, but here exiting only drops back to our own bootloader, which starts
+     * Rockbox again - so the player never actually turns off. Really power it
+     * down. */
+    nwz_power_shutdown();
+#endif
     exit(0);
 }
 
@@ -226,7 +235,10 @@ static void for_each_process(void (*fn)(int pid, const char *cmdline))
         FILE *f = fopen(path, "re");
         if(f == NULL)
             continue;
-        char cmd[128];
+        /* big enough for the whole command line: a hagodaemon can carry a long
+         * list of service names, and truncating it hid the very services we
+         * meant to spare (USB, storage) so they got frozen anyway */
+        char cmd[512];
         size_t n = fread(cmd, 1, sizeof(cmd) - 1, f);
         fclose(f);
         if(n == 0)

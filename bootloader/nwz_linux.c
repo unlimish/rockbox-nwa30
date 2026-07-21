@@ -174,7 +174,8 @@ static bool copy_file(const char *src, const char *dst, mode_t mode)
  * from, so stage the binary (and the libraries next to it) there.
  *
  * Falls back to running it in place, which is what the icx players do and
- * costs nothing to try. Returns only if the player could not be started. */
+ * costs nothing to try. Returns true if Rockbox ran (and has since exited),
+ * false if it could not be started at all. */
 #define ROCKBOX_ARGV0 "rockbox.sony"
 
 /* Is a Rockbox already running? Something in the stock userspace kills the
@@ -212,7 +213,7 @@ static bool rockbox_is_running(void)
     return found;
 }
 
-static void boot_rockbox(void)
+static bool boot_rockbox(void)
 {
     static const char *argv0 = ROCKBOX_ARGV0;
     char path[64];
@@ -268,7 +269,7 @@ static void boot_rockbox(void)
             int status;
             waitpid(pid, &status, 0);
             printf("rockbox exited (status %d)\n", status);
-            return;
+            return true;
         }
         printf("cannot fork: %s\n", strerror(errno));
         /* ENOENT here does not mean the binary is missing - we just wrote it -
@@ -290,6 +291,7 @@ static void boot_rockbox(void)
     /* last resort: run it where it lies */
     fflush(stdout);
     execl(ROCKBOX_BIN, argv0, NULL);
+    return false;
 }
 
 /* Sony logo extraction */
@@ -785,12 +787,14 @@ int main(int argc, char **argv)
             * this is neededlessly complicated and we defer this job to the dualboot
             * install script */
             fflush(stdout);
-            boot_rockbox();
-            /* only reached if the exec failed */
-            printf("execvp failed: %s\n", strerror(errno));
-            /* fallback to OF in case of failure */
-            error_screen("Cannot boot Rockbox");
-            sleep(5 * HZ);
+            if(!boot_rockbox())
+            {
+                printf("execvp failed: %s\n", strerror(errno));
+                /* fallback to OF in case of failure */
+                error_screen("Cannot boot Rockbox");
+                sleep(5 * HZ);
+            }
+            /* otherwise Rockbox ran and has quit, so come back to the menu */
         }
         else
         {

@@ -355,6 +355,19 @@ static void nwa30_set_bool_if_present(const char *name, bool val)
         printf("audio: mixer control '%s' is type %d, not a switch, skipping\n",
             name, type);
 }
+
+/* Same idea for an enumeration, e.g. "output device" -> "headphone". */
+static void nwa30_set_enum_if_present(const char *name, const char *value)
+{
+    snd_ctl_elem_type_t type = alsa_controls_get_type(name);
+    if(type == SND_CTL_ELEM_TYPE_ENUMERATED)
+        alsa_controls_set_enum(name, value);
+    else if(type == SND_CTL_ELEM_TYPE_NONE)
+        printf("audio: mixer control '%s' not found, skipping\n", name);
+    else
+        printf("audio: mixer control '%s' is type %d, not an enum, skipping\n",
+            name, type);
+}
 #endif
 
 void audiohw_set_playback_src(enum nwz_src_t src)
@@ -416,6 +429,13 @@ void audiohw_preinit(void)
      * type is fatal - so put the real list in the log to work from. */
     alsa_controls_dump();
     nwa30_set_bool_if_present("playback mute", false);
+    /* Route the output to the headphone jack and turn its amp on. Without this
+     * "output device" sits at 'off' and nothing is heard - which also looks
+     * like a track that ends the instant it starts. The A35 has a single-ended
+     * 3.5mm jack, so use the S-Master SE amp; values confirmed from the device
+     * kernel's control list. */
+    nwa30_set_enum_if_present("output device", "headphone");
+    nwa30_set_enum_if_present("headphone amp", "smaster-se");
     /* make sure the tuner passthrough is not mixed into playback */
     audiohw_set_playback_src(NWZ_PLAYBACK);
     /* Keep the hardware "master volume" at its maximum and do the actual
