@@ -227,6 +227,14 @@ static int set_hwparams(snd_pcm_t *handle, unsigned long sampr)
 
     err = 0; /* success */
 error:
+#ifdef SONY_NWA30
+    /* set_hwparams reports its failures with logf(), which never reaches the
+     * log file, so a device that rejects our format looks like silence with no
+     * explanation. Say plainly whether the parameters took. */
+    printf("pcm: set_hwparams(%luHz) -> %s (rate=%u, buffer=%ld, period=%ld)\n",
+        sampr, err == 0 ? "ok" : snd_strerror(err),
+        (unsigned)real_sample_rate, (long)buffer_size, (long)period_size);
+#endif
     snd_pcm_hw_params_free(params);
     return err;
 }

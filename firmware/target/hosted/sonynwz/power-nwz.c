@@ -206,7 +206,13 @@ int nwz_power_suspend(void)
 int nwz_power_shutdown(void)
 {
     sync(); /* man page advises to sync to avoid data loss */
-    return reboot(RB_POWER_OFF);
+    int ret = reboot(RB_POWER_OFF);
+    /* if we are still here, it did not work - say why (EPERM would mean we
+     * lack CAP_SYS_BOOT; with USB connected the hardware powers back up to
+     * charge, which looks the same to us) */
+    printf("power off: reboot() returned %d (%s)\n", ret, strerror(errno));
+    fflush(stdout);
+    return ret;
 }
 
 int nwz_power_restart(void)
