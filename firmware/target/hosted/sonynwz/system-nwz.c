@@ -240,6 +240,12 @@ static void nwz_sig_handler(int sig, siginfo_t *siginfo, void *context)
 void system_init(void)
 {
     int *s;
+    /* Our stdout is a file on the player, so it is block buffered by default:
+     * anything printed before an abrupt death (a signal we cannot handle, say)
+     * is lost with the buffer, which leaves the log showing only the unbuffered
+     * stderr output and makes it look as if we never got that far. Log lines as
+     * they are written instead - this log is how the port gets debugged. */
+    setvbuf(stdout, NULL, _IOLBF, 0);
     /* fake stack, to make thread-internal.h happy */
     stackbegin = stackend = (uintptr_t*)&s;
     /* catch some signals for easier debugging */

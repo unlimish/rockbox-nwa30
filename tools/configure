@@ -3681,7 +3681,8 @@ fi
     output="rockbox.sony"
     boottool="$rootdir/tools/scramble -add=a30"
     bootoutput="bootloader-nwa30.sony"
-    appextra="gui:recorder:radio"
+    # no radio: this player's tuner is not supported yet, see sonynwa30.h
+    appextra="gui:recorder"
     plugins=""
     toolset=$genericbitmaptools
     t_cpu="hosted"

@@ -38,6 +38,11 @@
  * partition, the dualboot installer renames it to .of */
 #define NWZ_OF_APP  "/system/vendor/sony/bin/HgrmMediaPlayerApp.of"
 
+/* This player's tuner is driven by radio_si4708icx, which does not implement
+ * the ioctls radio-nwz.c uses (they come back ENOTTY on the device), so there
+ * is no working FM radio here yet. */
+#define NWZ_NO_TUNER
+
 /* The CXD3778GF exposes several PCM devices; the normal (non-hi-res) music
  * playback path is card 0 device 1 (cxd3778gf-standard), confirmed by recon.
  * Device 0 is the hi-res-only output.

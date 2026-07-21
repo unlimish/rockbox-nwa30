@@ -61,12 +61,19 @@
 /* The number of bytes reserved for loadable plugins */
 #define PLUGIN_BUFFER_SIZE 0x100000
 
+/* The NW-A30 has a tuner but a different one (radio_si4708icx), which does not
+ * answer the ioctls radio-nwz.c sends, so leave it out until it is supported
+ * rather than fail at every step of the radio init. */
+#ifndef NWZ_NO_TUNER
 #define CONFIG_TUNER SI4700
+#endif
 
 /* There is no hardware tone control */
 #define HAVE_SW_TONE_CONTROLS
 
+#ifndef NWZ_NO_TUNER
 #define INPUT_SRC_CAPS SRC_CAP_FMRADIO
+#endif
 
 /* The A15 and A25 support more sampling rates, in fact they support crazy high bit-rates such
  * as 176.4 and 192 kHz but Rockbox does not support those */

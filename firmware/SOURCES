@@ -141,8 +141,12 @@ target/hosted/sonynwz/system-nwz.c
 target/hosted/sonynwz/powermgmt-nwz.c
 target/hosted/sonynwz/power-nwz.c
 target/hosted/sonynwz/adc-nwz.c
+#if CONFIG_TUNER
+/* both of these are only about the tuner: audio-nwz.c exists to switch the
+ * codec between playback and the radio */
 target/hosted/sonynwz/radio-nwz.c
 target/hosted/sonynwz/audio-nwz.c
+#endif
 target/hosted/sonynwz/debug-nwz.c
 target/hosted/sonynwz/nvp-nwz.c
 target/hosted/sonynwz/nwz-db.c
