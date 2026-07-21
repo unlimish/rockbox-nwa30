@@ -414,6 +414,16 @@ int button_read_device(BDATA)
             printf("alive: %ld s\n", (long)(current_tick / HZ));
         }
     }
+    /* Keep the watchdog happy, or it reboots the whole player about half a
+     * minute after we take over from the stock application. */
+    {
+        static long next_pet = 0;
+        if(TIME_AFTER(current_tick, next_pet))
+        {
+            next_pet = current_tick + HZ;
+            nwz_watchdog_pet();
+        }
+    }
 #endif
 
 #ifdef BUTTON_HOLD_KEYCODE

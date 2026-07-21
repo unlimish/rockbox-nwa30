@@ -27,6 +27,7 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <sys/file.h>
+#include <errno.h>
 
 #include "system.h"
 #include "lcd.h"
@@ -117,6 +118,65 @@ static void claim_single_instance(void)
         exit(0);
     }
     /* deliberately leaked: the lock must be held for our whole lifetime */
+}
+#endif
+
+#ifdef SONY_NWA30
+/* Why the player last started. The system reboots out from under us about half
+ * a minute after we take over, and the kernel command line records the reason,
+ * which says whether that is the watchdog or something else. */
+static void print_boot_reason(void)
+{
+    FILE *f = fopen("/proc/cmdline", "re");
+    if(f == NULL)
+        return;
+    char line[1024];
+    if(fgets(line, sizeof(line), f) != NULL)
+    {
+        const char *p = strstr(line, "bootreason=");
+        if(p != NULL)
+        {
+            p += sizeof("bootreason=") - 1;
+            printf("Boot reason: %.*s\n", (int)strcspn(p, " \n"), p);
+        }
+    }
+    fclose(f);
+}
+
+/* The watchdog, which is what we think reboots the player: the stock
+ * application presumably keeps it happy and we do not. Take it over if it is
+ * there, and see nwz_watchdog_pet(). */
+static int watchdog_fd = -1;
+
+static void watchdog_init(void)
+{
+    static const char *devices[] =
+    {
+        "/dev/watchdog", "/dev/misc/watchdog", "/dev/wdt", "/dev/mtk_wdt",
+    };
+    for(unsigned i = 0; i < sizeof(devices) / sizeof(devices[0]); i++)
+    {
+        watchdog_fd = open(devices[i], O_WRONLY | O_CLOEXEC);
+        if(watchdog_fd >= 0)
+        {
+            printf("watchdog: using %s\n", devices[i]);
+            return;
+        }
+    }
+    printf("watchdog: no device found\n");
+}
+
+/* Writing to the watchdog is what tells it we are still alive. */
+void nwz_watchdog_pet(void)
+{
+    if(watchdog_fd < 0)
+        return;
+    if(write(watchdog_fd, "\0", 1) < 0)
+    {
+        printf("watchdog: cannot pet it: %s\n", strerror(errno));
+        close(watchdog_fd);
+        watchdog_fd = -1;
+    }
 }
 #endif
 
@@ -324,6 +384,10 @@ void system_init(void)
     compute_kern_mod_list();
     print_kern_mod_list();
     print_uptime();
+#ifdef SONY_NWA30
+    print_boot_reason();
+    watchdog_init();
+#endif
     print_proc_list();
     for_each_process(kill_boot_animation);
     /* some init not done on hosted targets */

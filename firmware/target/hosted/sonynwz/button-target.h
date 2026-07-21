@@ -73,6 +73,10 @@ bool headphones_inserted(void);
 
 /* provided by button-devinput.c: re-read the hold switch state */
 void button_reload_hold_status(void);
+
+/* provided by system-nwz.c: tell the watchdog we are still alive, which is
+ * what stops it rebooting the player out from under us */
+void nwz_watchdog_pet(void);
 #endif
 
 #else /* SONY_NWZA860 */
