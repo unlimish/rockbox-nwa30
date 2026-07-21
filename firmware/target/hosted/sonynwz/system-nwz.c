@@ -254,6 +254,7 @@ static void print_proc_list(void)
  * its protocol, and it does mean the stock application management is out of
  * action for as long as Rockbox is running.
  */
+#if !defined(BOOTLOADER)
 static void freeze_app_manager(int pid, const char *cmdline)
 {
     if(strstr(cmdline, "appmgrservice") != NULL)
@@ -262,6 +263,7 @@ static void freeze_app_manager(int pid, const char *cmdline)
         kill(pid, SIGSTOP);
     }
 }
+#endif
 
 static void kill_boot_animation(int pid, const char *cmdline)
 {
