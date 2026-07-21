@@ -104,6 +104,7 @@ static void print_kern_mod_list(void)
  * Take a lock rather than look for another process by name: the lock is held by
  * the kernel for exactly as long as the process lives, so it cannot go stale,
  * and it does not care how the other copy was started. */
+#if defined(SONY_NWA30) && !defined(BOOTLOADER)
 static void claim_single_instance(void)
 {
     int fd = open("/tmp/rockbox.lock", O_RDWR | O_CREAT | O_CLOEXEC, 0666);
@@ -117,6 +118,7 @@ static void claim_single_instance(void)
     }
     /* deliberately leaked: the lock must be held for our whole lifetime */
 }
+#endif
 
 /* How long the machine has been up. We get restarted every half minute or so;
  * this says whether only our process is being restarted (uptime keeps rising
