@@ -25,6 +25,58 @@
 #include "load_code.h"
 #ifdef SONY_NWA30
 #include <stdio.h>
+#include <stdbool.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/stat.h>
+
+/* /contents is the FAT/exFAT user partition; it cannot mmap files with
+ * PROT_EXEC, so dlopen() on a codec or plugin loaded straight from there
+ * fails with EPERM ("failed to map segment from shared object"). This is
+ * the same restriction that forced rockbox.sony itself to be staged into
+ * tmpfs by the bootloader before exec - do the same here, on demand, for
+ * whichever .codec/.rock file is being loaded. */
+#define NWA30_EXEC_CACHE_DIR "/tmp/rockbox/codecache"
+
+static const char *nwa30_stage_for_exec(const char *fpath)
+{
+    static char staged[MAX_PATH];
+    const char *base = strrchr(fpath, '/');
+    base = base ? base + 1 : fpath;
+
+    mkdir(NWA30_EXEC_CACHE_DIR, 0755);
+    snprintf(staged, sizeof(staged), "%s/%s", NWA30_EXEC_CACHE_DIR, base);
+
+    int in = open(fpath, O_RDONLY);
+    if (in < 0)
+        return fpath; /* let dlopen() report the real error */
+    int out = open(staged, O_WRONLY | O_CREAT | O_TRUNC, 0755);
+    if (out < 0)
+    {
+        close(in);
+        return fpath;
+    }
+    char buf[16384];
+    ssize_t len;
+    bool ok = true;
+    while (ok && (len = read(in, buf, sizeof(buf))) > 0)
+    {
+        ssize_t off = 0;
+        while (off < len)
+        {
+            ssize_t wr = write(out, buf + off, len - off);
+            if (wr <= 0)
+            {
+                ok = false;
+                break;
+            }
+            off += wr;
+        }
+    }
+    close(in);
+    close(out);
+    return ok ? staged : fpath;
+}
 #endif
 
 void *lc_open(const char *filename, unsigned char *buf, size_t buf_size)
@@ -34,6 +86,9 @@ void *lc_open(const char *filename, unsigned char *buf, size_t buf_size)
     char path[MAX_PATH];
 
     const char *fpath = handle_special_dirs(filename, 0, path, sizeof(path));
+#ifdef SONY_NWA30
+    fpath = nwa30_stage_for_exec(fpath);
+#endif
 
     void *handle = dlopen(fpath, RTLD_NOW);
     if (handle == NULL)
