@@ -428,12 +428,22 @@ void audiohw_preinit(void)
      * device kernel, but not their types, and setting a control with the wrong
      * type is fatal - so put the real list in the log to work from. */
     alsa_controls_dump();
+    /* Unmute the whole playback path. The stock audio HAL
+     * (libaudiohal-adleralsa.so) clears several mutes to start playback, and we
+     * had only cleared one of them - "headphone mute" in particular was left on,
+     * so even with the output routed to the jack nothing came through. Clear
+     * every mute the device turns out to have on the digital/headphone path;
+     * whichever names are absent are simply skipped. Note we do NOT touch
+     * "analog playback mute", which belongs to the tuner and must stay muted for
+     * playback (see audiohw_set_playback_src). */
     nwa30_set_bool_if_present("playback mute", false);
+    nwa30_set_bool_if_present("digital playback mute", false);
+    nwa30_set_bool_if_present("headphone mute", false);
+    nwa30_set_bool_if_present("Master Switch", true);
     /* Route the output to the headphone jack and turn its amp on. Without this
-     * "output device" sits at 'off' and nothing is heard - which also looks
-     * like a track that ends the instant it starts. The A35 has a single-ended
-     * 3.5mm jack, so use the S-Master SE amp; values confirmed from the device
-     * kernel's control list. */
+     * "output device" sits at 'off' and nothing is heard. The A35 has a
+     * single-ended 3.5mm jack, so use the S-Master SE amp; values confirmed
+     * from the device's own control list and the stock HAL. */
     nwa30_set_enum_if_present("output device", "headphone");
     nwa30_set_enum_if_present("headphone amp", "smaster-se");
     /* make sure the tuner passthrough is not mixed into playback */

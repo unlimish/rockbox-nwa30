@@ -208,12 +208,15 @@ int nwz_power_shutdown(void)
 {
     sync(); /* man page advises to sync to avoid data loss */
     int ret = reboot(RB_POWER_OFF);
-    /* if we are still here, it did not work - say why (EPERM would mean we
-     * lack CAP_SYS_BOOT; with USB connected the hardware powers back up to
-     * charge, which looks the same to us) */
-    printf("power off: reboot() returned %d (%s)\n", ret, strerror(errno));
+    /* reboot() needs CAP_SYS_BOOT, which the app that launches us does not grant
+     * (it comes back EPERM): the stock firmware powers off by asking a
+     * privileged service, not by calling reboot() itself. Until we can do the
+     * same, fall back to suspend, which we are allowed to do - the player goes
+     * dark and idle, which is close enough to off to be useful. */
+    printf("power off: reboot() returned %d (%s), suspending instead\n",
+        ret, strerror(errno));
     fflush(stdout);
-    return ret;
+    return do_nwz_power_suspend();
 }
 
 int nwz_power_restart(void)
