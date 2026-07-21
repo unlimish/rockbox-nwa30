@@ -28,6 +28,7 @@
 #include <sys/ioctl.h>
 #include <string.h>
 #include <stdio.h>
+#include <errno.h>
 #include <sys/reboot.h>
 
 static int power_fd = -1; /* file descriptor */
