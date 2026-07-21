@@ -143,40 +143,51 @@ static void print_boot_reason(void)
     fclose(f);
 }
 
-/* The watchdog, which is what we think reboots the player: the stock
- * application presumably keeps it happy and we do not. Take it over if it is
- * there, and see nwz_watchdog_pet(). */
-static int watchdog_fd = -1;
-
-static void watchdog_init(void)
+/* Why the player restarted.
+ *
+ * It reboots about half a minute after we take over - the whole machine, not
+ * just us: /proc/uptime starts from scratch each time. The stock init arms a 30
+ * second watchdog (exec /bin/wdt_ctrl 30, which talks to /proc/wdk), but that
+ * one is kicked by kernel threads rather than by the application, so it should
+ * not fire just because we are the ones running.
+ *
+ * Rather than keep guessing, print what the machine itself records: the state
+ * of the watchdog, and the tail of the previous boot's kernel log, which is
+ * where a watchdog timeout, a panic or a deliberate restart would each say so
+ * in their own words. */
+static void print_file(const char *path, const char *what, long tail_bytes)
 {
-    static const char *devices[] =
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if(fd < 0)
+        return;
+    if(tail_bytes > 0)
     {
-        "/dev/watchdog", "/dev/misc/watchdog", "/dev/wdt", "/dev/mtk_wdt",
-    };
-    for(unsigned i = 0; i < sizeof(devices) / sizeof(devices[0]); i++)
-    {
-        watchdog_fd = open(devices[i], O_WRONLY | O_CLOEXEC);
-        if(watchdog_fd >= 0)
-        {
-            printf("watchdog: using %s\n", devices[i]);
-            return;
-        }
+        off_t end = lseek(fd, 0, SEEK_END);
+        lseek(fd, end > tail_bytes ? end - tail_bytes : 0, SEEK_SET);
     }
-    printf("watchdog: no device found\n");
+    printf("--- %s (%s) ---\n", what, path);
+    char buf[512];
+    ssize_t n;
+    while((n = read(fd, buf, sizeof(buf) - 1)) > 0)
+    {
+        buf[n] = 0;
+        fputs(buf, stdout);
+    }
+    printf("\n--- end of %s ---\n", what);
+    close(fd);
 }
 
-/* Writing to the watchdog is what tells it we are still alive. */
+static void print_restart_evidence(void)
+{
+    print_file("/proc/wdk", "watchdog state", 0);
+    /* the previous boot's kernel log, under the two names it goes by */
+    print_file("/proc/last_kmsg", "previous kernel log", 2048);
+    print_file("/sys/fs/pstore/console-ramoops", "previous console", 2048);
+}
+
+/* Nothing to pet: the watchdog on this platform is kicked by the kernel. */
 void nwz_watchdog_pet(void)
 {
-    if(watchdog_fd < 0)
-        return;
-    if(write(watchdog_fd, "\0", 1) < 0)
-    {
-        printf("watchdog: cannot pet it: %s\n", strerror(errno));
-        close(watchdog_fd);
-        watchdog_fd = -1;
-    }
 }
 #endif
 
@@ -411,7 +422,8 @@ void system_init(void)
     print_uptime();
 #ifdef SONY_NWA30
     print_boot_reason();
-    watchdog_init();
+    print_restart_evidence();
+
 #endif
     print_proc_list();
     for_each_process(kill_boot_animation);
