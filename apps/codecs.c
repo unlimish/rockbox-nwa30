@@ -200,6 +200,12 @@ static int codec_load_ram(struct codec_api *api)
         )
     {
         logf("codec header error");
+#ifdef SONY_NWA30
+        printf("codec: header error (hdr=%p, magic=%lx, target_id=%d vs %d)\n",
+            (void *)hdr, (unsigned long)(hdr ? hdr->magic : 0),
+            hdr ? hdr->target_id : -1, TARGET_ID);
+        fflush(stdout);
+#endif
         lc_close(curr_handle);
         curr_handle = NULL;
         return CODEC_ERROR;
@@ -209,6 +215,12 @@ static int codec_load_ram(struct codec_api *api)
         c_hdr->api_size > sizeof(struct codec_api))
     {
         logf("codec api version error");
+#ifdef SONY_NWA30
+        printf("codec: api version error (%d vs %d, size %d vs %d)\n",
+            hdr->api_version, CODEC_API_VERSION,
+            (int)c_hdr->api_size, (int)sizeof(struct codec_api));
+        fflush(stdout);
+#endif
         lc_close(curr_handle);
         curr_handle = NULL;
         return CODEC_ERROR;

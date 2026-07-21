@@ -33,6 +33,9 @@
 #include "dsp_core.h"
 #include "metadata.h"
 #include "settings.h"
+#ifdef SONY_NWA30
+#include <stdio.h>
+#endif
 
 /* Define LOGF_ENABLE to enable logf output in this file */
 /*#define LOGF_ENABLE*/
@@ -500,6 +503,13 @@ static void load_codec(const struct codec_load_info *ev_data)
     }
 
     /* Failed - get rid of it */
+#ifdef SONY_NWA30
+    /* This path is otherwise silent (logf only), so a codec that fails to
+     * load just looks like the track skipping instantly with no clue why. */
+    printf("codec: load_codec failed for afmt %d (status %d)\n",
+        data.afmt, status);
+    fflush(stdout);
+#endif
     unload_codec();
 }
 

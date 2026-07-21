@@ -23,6 +23,9 @@
 #include "file.h"
 #include "debug.h"
 #include "load_code.h"
+#ifdef SONY_NWA30
+#include <stdio.h>
+#endif
 
 void *lc_open(const char *filename, unsigned char *buf, size_t buf_size)
 {
@@ -37,6 +40,13 @@ void *lc_open(const char *filename, unsigned char *buf, size_t buf_size)
     {
         DEBUGF("failed to load %s\n", filename);
         DEBUGF("lc_open(%s): %s\n", filename, dlerror());
+#ifdef SONY_NWA30
+        /* DEBUGF is compiled out in release builds, which is why this
+         * failure was invisible: codecs would silently fail to load and
+         * playback would just skip the track. Say why dlopen rejected it. */
+        printf("lc_open(%s): %s\n", fpath, dlerror());
+        fflush(stdout);
+#endif
     }
     return handle;
 }
