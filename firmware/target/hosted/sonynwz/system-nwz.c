@@ -28,6 +28,7 @@
 #include <fcntl.h>
 #include <sys/file.h>
 #include <errno.h>
+#include <limits.h>
 
 #include "system.h"
 #include "lcd.h"
@@ -266,6 +267,63 @@ static void print_proc_list(void)
  * action for as long as Rockbox is running.
  */
 #if !defined(BOOTLOADER)
+/* Find who runs the hang checker.
+ *
+ * The framework in libpstcore.so watches applications' main threads and, when
+ * it decides one is stuck, restarts the machine:
+ *
+ *     Hang detected! pid=%s
+ *     Application(pid=%s) main thread is freezed, reboot the system...
+ *
+ * The previous boot's kernel log names the thread that asks for the restart -
+ * "fr_job" - but that library is loaded by every hagodaemon process, so the
+ * name alone does not say which one. Look through each process's threads for
+ * it, which does.
+ */
+static void find_thread_owner(int pid, const char *cmdline, const char *thread,
+                              bool freeze)
+{
+    char dir[32];
+    snprintf(dir, sizeof(dir), "/proc/%d/task", pid);
+    DIR *task = opendir(dir);
+    if(task == NULL)
+        return;
+    struct dirent *tid;
+    while((tid = readdir(task)))
+    {
+        if(tid->d_name[0] < '1' || tid->d_name[0] > '9')
+            continue;
+        char path[sizeof(dir) + 1 + NAME_MAX + sizeof("/comm")];
+        snprintf(path, sizeof(path), "%s/%s/comm", dir, tid->d_name);
+        FILE *f = fopen(path, "re");
+        if(f == NULL)
+            continue;
+        char comm[32] = {0};
+        if(fgets(comm, sizeof(comm), f) != NULL)
+        {
+            comm[strcspn(comm, "\n")] = 0;
+            if(strcmp(comm, thread) == 0)
+            {
+                printf("thread '%s' belongs to pid %d: %s\n", thread, pid, cmdline);
+                if(freeze)
+                {
+                    printf("freezing it\n");
+                    kill(pid, SIGSTOP);
+                }
+            }
+        }
+        fclose(f);
+    }
+    closedir(task);
+}
+
+static void handle_hang_checker(int pid, const char *cmdline)
+{
+    find_thread_owner(pid, cmdline, "fr_job", true);
+}
+#endif
+
+#if !defined(BOOTLOADER)
 static void freeze_app_manager(int pid, const char *cmdline)
 {
     if(strstr(cmdline, "appmgrservice") != NULL)
@@ -429,6 +487,7 @@ void system_init(void)
     for_each_process(kill_boot_animation);
 #if !defined(BOOTLOADER)
     for_each_process(freeze_app_manager);
+    for_each_process(handle_hang_checker);
 #endif
     /* some init not done on hosted targets */
     adc_init();
