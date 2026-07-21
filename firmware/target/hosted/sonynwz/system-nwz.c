@@ -240,6 +240,29 @@ static void print_proc_list(void)
     for_each_process(print_one_process);
 }
 
+/* Stop the application manager from restarting the player.
+ *
+ * The stock application reports to it over the Sony IPC framework once it is up
+ * ("FireChangeLifeCycle"); we do not, so it times out waiting for the home
+ * application to reach the foreground and has the machine restarted - which is
+ * what the previous boot's kernel log shows, an orderly reboot run by a process
+ * called "reboot" about half a minute in.
+ *
+ * Freeze it rather than kill it: killed, init would start it again and the same
+ * countdown would begin; stopped, it stays in the process table and simply
+ * never runs the timeout. This is a blunt instrument standing in for speaking
+ * its protocol, and it does mean the stock application management is out of
+ * action for as long as Rockbox is running.
+ */
+static void freeze_app_manager(int pid, const char *cmdline)
+{
+    if(strstr(cmdline, "appmgrservice") != NULL)
+    {
+        printf("freezing app manager (pid %d)\n", pid);
+        kill(pid, SIGSTOP);
+    }
+}
+
 static void kill_boot_animation(int pid, const char *cmdline)
 {
     /* The stock boot splash keeps drawing over our screen because nothing told
@@ -390,6 +413,9 @@ void system_init(void)
 #endif
     print_proc_list();
     for_each_process(kill_boot_animation);
+#if !defined(BOOTLOADER)
+    for_each_process(freeze_app_manager);
+#endif
     /* some init not done on hosted targets */
     adc_init();
     power_init();
