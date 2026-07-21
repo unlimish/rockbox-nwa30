@@ -52,36 +52,46 @@ static void nwa30_probe_once(void)
         return;
     done = true;
 
+    /* Test 1: create a neutrally-named file under our own new subdirectory. */
     mkdir(NWA30_EXEC_CACHE_DIR, 0755);
     char neutral[MAX_PATH];
     snprintf(neutral, sizeof(neutral), "%s/probe.dat", NWA30_EXEC_CACHE_DIR);
     int fd = open(neutral, O_WRONLY | O_CREAT | O_TRUNC, 0755);
     if (fd < 0)
-        printf("nwa30_probe: open(%s) [neutral name]: %s\n", neutral, strerror(errno));
+        printf("nwa30_probe: open(%s) [codecache subdir]: %s\n", neutral, strerror(errno));
     else
     {
-        printf("nwa30_probe: open(%s) [neutral name]: ok\n", neutral);
+        printf("nwa30_probe: open(%s) [codecache subdir]: ok\n", neutral);
         close(fd);
     }
 
-    void *h = dlopen("/tmp/rockbox/lib/libasound.so.2", RTLD_NOW | RTLD_NOLOAD);
+    /* Test 2: create a neutrally-named file directly in STAGE_DIR itself -
+     * the same directory the bootloader already wrote rockbox.sony and the
+     * .so libs into before exec. Tells apart "nothing new can be created
+     * under STAGE_DIR by the running app" from "only the codecache
+     * subdirectory specifically is blocked". */
+    fd = open("/tmp/rockbox/probe.dat", O_WRONLY | O_CREAT | O_TRUNC, 0755);
+    if (fd < 0)
+        printf("nwa30_probe: open(/tmp/rockbox/probe.dat) [STAGE_DIR itself]: %s\n",
+            strerror(errno));
+    else
+    {
+        printf("nwa30_probe: open(/tmp/rockbox/probe.dat) [STAGE_DIR itself]: ok\n");
+        close(fd);
+    }
+
+    /* Test 3: explicit runtime dlopen() of a .so the bootloader already
+     * staged and that is proven to work (it's linked in via DT_NEEDED at
+     * exec time - ALSA is clearly functioning elsewhere in this same log).
+     * The bootloader copies libs flat into STAGE_DIR, not a "lib"
+     * subdirectory - see boot_rockbox() in bootloader/nwz_linux.c. */
+    void *h = dlopen("/tmp/rockbox/libasound.so.2", RTLD_NOW);
     if (h == NULL)
-        printf("nwa30_probe: dlopen(libasound.so.2, RTLD_NOLOAD): %s (not already loaded, expected)\n",
+        printf("nwa30_probe: dlopen(/tmp/rockbox/libasound.so.2, RTLD_NOW): %s\n",
             dlerror());
     else
     {
-        printf("nwa30_probe: dlopen(libasound.so.2, RTLD_NOLOAD): ok (already loaded)\n");
-        dlclose(h);
-    }
-    /* Try loading it explicitly (not via the automatic DT_NEEDED link at
-     * exec time) to see whether runtime dlopen() itself is blocked for
-     * this process, independent of the codec cache directory entirely. */
-    h = dlopen("/tmp/rockbox/lib/libasound.so.2", RTLD_NOW);
-    if (h == NULL)
-        printf("nwa30_probe: dlopen(libasound.so.2, RTLD_NOW): %s\n", dlerror());
-    else
-    {
-        printf("nwa30_probe: dlopen(libasound.so.2, RTLD_NOW): ok\n");
+        printf("nwa30_probe: dlopen(/tmp/rockbox/libasound.so.2, RTLD_NOW): ok\n");
         dlclose(h);
     }
     fflush(stdout);
