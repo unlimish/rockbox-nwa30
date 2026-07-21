@@ -174,9 +174,46 @@ static bool copy_file(const char *src, const char *dst, mode_t mode)
  *
  * Falls back to running it in place, which is what the icx players do and
  * costs nothing to try. Returns only if the player could not be started. */
+#define ROCKBOX_ARGV0 "rockbox.sony"
+
+/* Is a Rockbox already running? Something in the stock userspace kills the
+ * application we replaced about half a minute after it starts, so we hand
+ * Rockbox its own session (see boot_rockbox()) and it outlives us. The system
+ * then starts us again in its place, and we must not launch a second one on
+ * top of the first. */
+static bool rockbox_is_running(void)
+{
+    bool found = false;
+    DIR *proc = opendir("/proc");
+    if(proc == NULL)
+        return false;
+    struct dirent *entry;
+    while(!found && (entry = readdir(proc)))
+    {
+        if(entry->d_name[0] < '1' || entry->d_name[0] > '9')
+            continue;
+        char path[sizeof("/proc//cmdline") + NAME_MAX];
+        snprintf(path, sizeof(path), "/proc/%s/cmdline", entry->d_name);
+        FILE *f = fopen(path, "re");
+        if(f == NULL)
+            continue;
+        char cmd[64];
+        size_t n = fread(cmd, 1, sizeof(cmd) - 1, f);
+        fclose(f);
+        if(n == 0)
+            continue;
+        cmd[n] = 0;
+        /* cmdline starts with argv[0] and is NUL terminated */
+        if(strcmp(cmd, ROCKBOX_ARGV0) == 0)
+            found = true;
+    }
+    closedir(proc);
+    return found;
+}
+
 static void boot_rockbox(void)
 {
-    static const char *argv0 = "rockbox.sony";
+    static const char *argv0 = ROCKBOX_ARGV0;
     char path[64];
 
     mkdir(STAGE_DIR, 0755);
@@ -208,8 +245,31 @@ static void boot_rockbox(void)
         setenv("LD_LIBRARY_PATH", STAGE_DIR, 1);
         printf("booting %s\n", path);
         fflush(stdout);
-        execl(path, argv0, NULL);
-        printf("cannot run %s: %s\n", path, strerror(errno));
+        /* Run Rockbox in a session of its own rather than in our place. The
+         * application we are standing in for gets killed about half a minute
+         * after it starts - SIGTERM, then SIGKILL if that is ignored - and
+         * taking Rockbox with it. In its own session it is no longer the
+         * process being killed, and simply carries on without us. */
+        pid_t pid = fork();
+        if(pid == 0)
+        {
+            setsid();
+            execl(path, argv0, NULL);
+            printf("cannot run %s: %s\n", path, strerror(errno));
+            fflush(stdout);
+            _exit(1);
+        }
+        if(pid > 0)
+        {
+            /* Wait for it, so that picking Rockbox and coming back out of it
+             * returns here. If we are killed first, Rockbox keeps running and
+             * whatever replaces us will see it and stand aside. */
+            int status;
+            waitpid(pid, &status, 0);
+            printf("rockbox exited (status %d)\n", status);
+            return;
+        }
+        printf("cannot fork: %s\n", strerror(errno));
         /* ENOENT here does not mean the binary is missing - we just wrote it -
          * but that its ELF interpreter is. Report enough to tell which. */
         if(errno == ENOENT)
@@ -637,6 +697,18 @@ int main(int argc, char **argv)
     printf("Rockbox boot loader\n");
     printf("Version: %s\n", rbversion);
     printf("%s\n", MODEL_NAME);
+
+    /* The system restarts the application we replaced after it kills it, so we
+     * may well be starting on top of a Rockbox that is still running. Say so
+     * and get out of the way: touching the screen or the buttons from here
+     * would fight with it. */
+    if(rockbox_is_running())
+    {
+        printf("rockbox is already running, standing by\n");
+        fflush(stdout);
+        while(true)
+            sleep(60 * HZ);
+    }
 
     system_init();
     core_allocator_init();
