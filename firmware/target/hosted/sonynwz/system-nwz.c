@@ -41,6 +41,7 @@
 #include "mv.h"
 #include "power-nwz.h"
 #include <backtrace.h>
+#include "version.h"
 
 #include "logf.h"
 
@@ -503,6 +504,20 @@ void system_init(void)
      * stderr output and makes it look as if we never got that far. Log lines as
      * they are written instead - this log is how the port gets debugged. */
     setvbuf(stdout, NULL, _IOLBF, 0);
+#ifdef SONY_NWA30
+    /* Every debugging round on this device has cost a wasted flash/test
+     * cycle to a stale build, because nothing in the log said which
+     * commit's binary was actually running. Say it plainly, first thing,
+     * for both the bootloader and the main app. */
+    printf("build: %s (%s)\n", rbversion,
+#if defined(BOOTLOADER)
+        "bootloader"
+#else
+        "main"
+#endif
+        );
+    fflush(stdout);
+#endif
 #if defined(SONY_NWA30) && !defined(BOOTLOADER)
     claim_single_instance();
 #endif
