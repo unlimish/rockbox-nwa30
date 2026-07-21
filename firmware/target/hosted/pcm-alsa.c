@@ -133,6 +133,7 @@ static int set_hwparams(snd_pcm_t *handle, unsigned long sampr)
 {
     int err;
     unsigned int srate;
+    const char *step = "?"; (void)step; /* which step failed, for the A30 log */
     snd_pcm_hw_params_t *params;
     snd_pcm_hw_params_malloc(&params);
 
@@ -155,6 +156,7 @@ static int set_hwparams(snd_pcm_t *handle, unsigned long sampr)
     }
 
     /* choose all parameters */
+    step = "any";
     err = snd_pcm_hw_params_any(handle, params);
     if (err < 0)
     {
@@ -162,6 +164,7 @@ static int set_hwparams(snd_pcm_t *handle, unsigned long sampr)
         goto error;
     }
     /* set the interleaved read/write format */
+    step = "access";
     err = snd_pcm_hw_params_set_access(handle, params, access_);
     if (err < 0)
     {
@@ -169,6 +172,7 @@ static int set_hwparams(snd_pcm_t *handle, unsigned long sampr)
         goto error;
     }
     /* set the sample format */
+    step = "format";
     err = snd_pcm_hw_params_set_format(handle, params, format);
     if (err < 0)
     {
@@ -176,6 +180,7 @@ static int set_hwparams(snd_pcm_t *handle, unsigned long sampr)
         goto error;
     }
     /* set the count of channels */
+    step = "channels";
     err = snd_pcm_hw_params_set_channels(handle, params, channels);
     if (err < 0)
     {
@@ -184,6 +189,7 @@ static int set_hwparams(snd_pcm_t *handle, unsigned long sampr)
     }
     /* set the stream rate */
     srate = sampr;
+    step = "rate";
     err = snd_pcm_hw_params_set_rate_near(handle, params, &srate, 0);
     if (err < 0)
     {
@@ -193,12 +199,14 @@ static int set_hwparams(snd_pcm_t *handle, unsigned long sampr)
     real_sample_rate = srate;
     if (real_sample_rate != sampr)
     {
+        step = "rate-match";
         logf("Rate doesn't match (requested %luHz, get %dHz)", sampr, real_sample_rate);
         err = -EINVAL;
         goto error;
     }
 
     /* set the buffer size */
+    step = "buffer";
     err = snd_pcm_hw_params_set_buffer_size_near(handle, params, &buffer_size);
     if (err < 0)
     {
@@ -207,6 +215,7 @@ static int set_hwparams(snd_pcm_t *handle, unsigned long sampr)
     }
 
     /* set the period size */
+    step = "period";
     err = snd_pcm_hw_params_set_period_size_near (handle, params, &period_size, NULL);
     if (err < 0)
     {
@@ -218,6 +227,7 @@ static int set_hwparams(snd_pcm_t *handle, unsigned long sampr)
     frames = calloc(1, period_size * channels * sizeof(sample_t));
 
     /* write the parameters to device */
+    step = "commit";
     err = snd_pcm_hw_params(handle, params);
     if (err < 0)
     {
@@ -231,8 +241,8 @@ error:
     /* set_hwparams reports its failures with logf(), which never reaches the
      * log file, so a device that rejects our format looks like silence with no
      * explanation. Say plainly whether the parameters took. */
-    printf("pcm: set_hwparams(%luHz) -> %s (rate=%u, buffer=%ld, period=%ld)\n",
-        sampr, err == 0 ? "ok" : snd_strerror(err),
+    printf("pcm: set_hwparams(%luHz) -> %s at %s (rate=%u, buffer=%ld, period=%ld)\n",
+        sampr, err == 0 ? "ok" : snd_strerror(err), err == 0 ? "-" : step,
         (unsigned)real_sample_rate, (long)buffer_size, (long)period_size);
 #endif
     snd_pcm_hw_params_free(params);
