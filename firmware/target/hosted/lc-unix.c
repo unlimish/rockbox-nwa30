@@ -40,11 +40,60 @@
  * whichever .codec/.rock file is being loaded. */
 #define NWA30_EXEC_CACHE_DIR "/tmp/rockbox/codecache"
 
+/* One-shot probe to tell apart two very different failure modes: creating
+ * a *new* file under a name that looks like code (matches the mkdir-then-
+ * ENOENT-on-open symptom we're chasing) versus dlopen() itself being
+ * blocked for this process regardless of where the .so lives. Runs once,
+ * before the first real staging attempt. */
+static void nwa30_probe_once(void)
+{
+    static bool done = false;
+    if (done)
+        return;
+    done = true;
+
+    mkdir(NWA30_EXEC_CACHE_DIR, 0755);
+    char neutral[MAX_PATH];
+    snprintf(neutral, sizeof(neutral), "%s/probe.dat", NWA30_EXEC_CACHE_DIR);
+    int fd = open(neutral, O_WRONLY | O_CREAT | O_TRUNC, 0755);
+    if (fd < 0)
+        printf("nwa30_probe: open(%s) [neutral name]: %s\n", neutral, strerror(errno));
+    else
+    {
+        printf("nwa30_probe: open(%s) [neutral name]: ok\n", neutral);
+        close(fd);
+    }
+
+    void *h = dlopen("/tmp/rockbox/lib/libasound.so.2", RTLD_NOW | RTLD_NOLOAD);
+    if (h == NULL)
+        printf("nwa30_probe: dlopen(libasound.so.2, RTLD_NOLOAD): %s (not already loaded, expected)\n",
+            dlerror());
+    else
+    {
+        printf("nwa30_probe: dlopen(libasound.so.2, RTLD_NOLOAD): ok (already loaded)\n");
+        dlclose(h);
+    }
+    /* Try loading it explicitly (not via the automatic DT_NEEDED link at
+     * exec time) to see whether runtime dlopen() itself is blocked for
+     * this process, independent of the codec cache directory entirely. */
+    h = dlopen("/tmp/rockbox/lib/libasound.so.2", RTLD_NOW);
+    if (h == NULL)
+        printf("nwa30_probe: dlopen(libasound.so.2, RTLD_NOW): %s\n", dlerror());
+    else
+    {
+        printf("nwa30_probe: dlopen(libasound.so.2, RTLD_NOW): ok\n");
+        dlclose(h);
+    }
+    fflush(stdout);
+}
+
 static const char *nwa30_stage_for_exec(const char *fpath)
 {
     static char staged[MAX_PATH];
     const char *base = strrchr(fpath, '/');
     base = base ? base + 1 : fpath;
+
+    nwa30_probe_once();
 
     int mkdir_rc = mkdir(NWA30_EXEC_CACHE_DIR, 0755);
     int mkdir_errno = errno;
