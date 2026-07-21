@@ -25,6 +25,8 @@
 #include <string.h>
 #include <stdio.h>
 #include <dirent.h>
+#include <fcntl.h>
+#include <sys/file.h>
 
 #include "system.h"
 #include "lcd.h"
@@ -89,6 +91,31 @@ static void print_kern_mod_list(void)
     const char **p = kern_mod_list;
     while(*p)
         printf("  %s\n", *p++);
+}
+
+/* Refuse to run twice.
+ *
+ * The application we replace gets killed every half minute or so and started
+ * again, and Rockbox now outlives that by running in its own session - so the
+ * copy that replaces us can find one already running and start a second. Two of
+ * them fight over the framebuffer and the input devices, which looks like
+ * everything at once misbehaving.
+ *
+ * Take a lock rather than look for another process by name: the lock is held by
+ * the kernel for exactly as long as the process lives, so it cannot go stale,
+ * and it does not care how the other copy was started. */
+static void claim_single_instance(void)
+{
+    int fd = open("/tmp/rockbox.lock", O_RDWR | O_CREAT | O_CLOEXEC, 0666);
+    if(fd < 0)
+        return; /* cannot tell - carry on rather than refuse to start */
+    if(flock(fd, LOCK_EX | LOCK_NB) < 0)
+    {
+        printf("another rockbox is already running, exiting\n");
+        fflush(stdout);
+        exit(0);
+    }
+    /* deliberately leaked: the lock must be held for our whole lifetime */
 }
 
 /* How long the machine has been up. We get restarted every half minute or so;
@@ -261,6 +288,9 @@ void system_init(void)
      * stderr output and makes it look as if we never got that far. Log lines as
      * they are written instead - this log is how the port gets debugged. */
     setvbuf(stdout, NULL, _IOLBF, 0);
+#if defined(SONY_NWA30) && !defined(BOOTLOADER)
+    claim_single_instance();
+#endif
     /* fake stack, to make thread-internal.h happy */
     stackbegin = stackend = (uintptr_t*)&s;
     /* catch some signals for easier debugging */
