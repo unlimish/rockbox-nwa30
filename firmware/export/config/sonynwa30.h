@@ -32,6 +32,13 @@
 #define HAVE_TOUCHSCREEN
 #define HAVE_BUTTON_DATA
 
+/* The himax controller reports positions in a 960x1600 space - exactly twice
+ * the panel - so halve them to get pixels. Measured on the device: touching
+ * the corners gives x up to 939 and y up to 1579. */
+#define DEFAULT_TOUCHSCREEN_CALIBRATION { .A=1, .B=0, .C=0, \
+                                          .D=0, .E=1, .F=0, \
+                                          .divider=2 }
+
 #define NWZ_HAS_SD
 
 /* on the Hagoromo platform the main application lives in the vendor

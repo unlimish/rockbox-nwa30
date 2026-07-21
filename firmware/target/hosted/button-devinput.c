@@ -388,18 +388,31 @@ int button_read_device(BDATA)
     {
         btns |= touch;
 #ifdef SONY_NWA30
-        /* The touch controller's coordinate range has not been matched to the
-         * screen yet, so touches land in the wrong place. Log the raw values
-         * (throttled) - touching the corners tells us the range to calibrate
-         * against LCD_WIDTH x LCD_HEIGHT. */
+        /* Raw vs mapped position, to check the calibration on the device. */
         static long last_log = 0;
-        if(TIME_AFTER(current_tick, last_log + HZ / 4))
+        if(TIME_AFTER(current_tick, last_log + HZ / 2))
         {
             last_log = current_tick;
             printf("touch: raw=%d,%d -> pixel=%d,%d\n",
                 _last_x, _last_y, *data >> 16, *data & 0xffff);
         }
 #endif
+    }
+#endif
+
+#ifdef SONY_NWA30
+    /* Something in the stock userspace kills us a while after we start, without
+     * warning: it sends SIGTERM, and when that is ignored it escalates to
+     * SIGKILL, which leaves nothing in the log. Print how long we have been
+     * running so the log shows how long we lasted - a consistent figure would
+     * mean a timeout is being enforced rather than something we did. */
+    {
+        static long next_beat = 0;
+        if(TIME_AFTER(current_tick, next_beat))
+        {
+            next_beat = current_tick + 5 * HZ;
+            printf("alive: %ld s\n", (long)(current_tick / HZ));
+        }
     }
 #endif
 
