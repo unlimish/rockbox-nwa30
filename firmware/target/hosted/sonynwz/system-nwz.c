@@ -91,6 +91,21 @@ static void print_kern_mod_list(void)
         printf("  %s\n", *p++);
 }
 
+/* How long the machine has been up. We get restarted every half minute or so;
+ * this says whether only our process is being restarted (uptime keeps rising
+ * across restarts) or the whole player is rebooting (it goes back to zero),
+ * which decides whether outliving the app we replaced can help at all. */
+static void print_uptime(void)
+{
+    FILE *f = fopen("/proc/uptime", "re");
+    if(f == NULL)
+        return;
+    double up;
+    if(fscanf(f, "%lf", &up) == 1)
+        printf("System uptime: %.1f s\n", up);
+    fclose(f);
+}
+
 /* Walk /proc: for every process, call fn(pid, cmdline). We run in place of the
  * stock application while the rest of the stock userspace keeps running, so
  * this is how we find both what to log and what to stop. */
@@ -276,6 +291,7 @@ void system_init(void)
 #endif
     compute_kern_mod_list();
     print_kern_mod_list();
+    print_uptime();
     print_proc_list();
     for_each_process(kill_boot_animation);
     /* some init not done on hosted targets */
