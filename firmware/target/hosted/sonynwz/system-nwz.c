@@ -195,6 +195,26 @@ static void print_restart_evidence(void)
     print_file("/sys/fs/pstore/console-ramoops", "previous console", 2048);
 }
 
+static void print_mount_info(void)
+{
+    /* dlopen() on a codec/plugin loaded from /contents fails with EPERM
+     * ("failed to map segment"); confirm whether that's a plain noexec
+     * mount (fixable by remounting) rather than something else (SELinux,
+     * a read-only overlay) that a remount would not help with. */
+    FILE *f = fopen("/proc/mounts", "re");
+    if(f == NULL)
+        return;
+    printf("--- mounts (/contents, /tmp) ---\n");
+    char line[512];
+    while(fgets(line, sizeof(line), f))
+    {
+        if(strstr(line, " /contents ") || strstr(line, " /tmp "))
+            fputs(line, stdout);
+    }
+    printf("--- end of mounts ---\n");
+    fclose(f);
+}
+
 /* Nothing to pet: the watchdog on this platform is kicked by the kernel. */
 void nwz_watchdog_pet(void)
 {
@@ -520,6 +540,7 @@ void system_init(void)
 #ifdef SONY_NWA30
     print_boot_reason();
     print_restart_evidence();
+    print_mount_info();
 
 #endif
     print_proc_list();
