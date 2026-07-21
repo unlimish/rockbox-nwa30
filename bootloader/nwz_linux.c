@@ -43,6 +43,7 @@
 #include <dirent.h>
 #include <limits.h>
 #include <sys/wait.h>
+#include <signal.h>
 #include <stdarg.h>
 #include "version.h"
 
@@ -750,8 +751,22 @@ int main(int argc, char **argv)
         {
             fflush(stdout);
             fflush(stderr);
-            close(fileno(stdout));
-            close(fileno(stderr));
+            /* Stop logging, but hand the original firmware a sane set of file
+             * descriptors: leaving 1 and 2 closed means the first file it opens
+             * becomes its stdout, and everything it prints lands in that file. */
+            int devnull = open("/dev/null", O_WRONLY);
+            if(devnull >= 0)
+            {
+                dup2(devnull, fileno(stdout));
+                dup2(devnull, fileno(stderr));
+                if(devnull > fileno(stderr))
+                    close(devnull);
+            }
+            /* We ignore SIGTERM to survive being told to quit; the original
+             * firmware must not inherit that, since answering it is how the
+             * system takes the player back (for USB, say). Ignored signals do
+             * carry across exec, so put it back first. */
+            signal(SIGTERM, SIG_DFL);
             /* for now the only way we have to trigger USB mode it to run the OF */
             /* boot OF */
             execvp(NWZ_OF_APP, argv);
