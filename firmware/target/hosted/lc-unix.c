@@ -25,147 +25,40 @@
 #include "load_code.h"
 #ifdef SONY_NWA30
 #include <stdio.h>
-#include <stdbool.h>
-#include <fcntl.h>
 #include <unistd.h>
-#include <sys/stat.h>
 #include <errno.h>
 #include <string.h>
 
-/* /contents is the FAT/exFAT user partition; it cannot mmap files with
- * PROT_EXEC, so dlopen() on a codec or plugin loaded straight from there
- * fails with EPERM ("failed to map segment from shared object"). This is
- * the same restriction that forced rockbox.sony itself to be staged into
- * tmpfs by the bootloader before exec - do the same here, on demand, for
- * whichever .codec/.rock file is being loaded. */
-#define NWA30_EXEC_CACHE_DIR "/tmp/rockbox/codecache"
+/* /contents (FAT/exFAT) rejects PROT_EXEC mmap, so dlopen() on a codec
+ * loaded straight from there fails with EPERM. Staging the file into
+ * tmpfs *at runtime*, from inside the running rockbox.sony process, does
+ * not work either: a probe confirmed the process can create directories
+ * under /tmp/rockbox but not new files, even directly in STAGE_DIR where
+ * the bootloader itself wrote rockbox.sony and the .so libs moments
+ * earlier (ENOENT on open(O_CREAT), despite mkdir()+stat() agreeing the
+ * parent directory exists) - a permission model tied to which process
+ * created the file, not a filesystem-state issue. An explicit dlopen() of
+ * an already-staged file (libasound.so.2) worked fine, so it is file
+ * *creation* that is being denied here, not dynamic loading in general.
+ *
+ * So the bootloader stages the codecs into tmpfs up front, the same way
+ * it already does for rockbox.sony and its libraries - see
+ * copy_dir_flat(ROCKBOX_CODECS_DIR, STAGE_CODECS_DIR) in
+ * bootloader/nwz_linux.c. This just looks up that pre-staged copy. */
+#define NWA30_STAGED_CODECS_DIR "/tmp/rockbox/codecs"
 
-/* One-shot probe to tell apart two very different failure modes: creating
- * a *new* file under a name that looks like code (matches the mkdir-then-
- * ENOENT-on-open symptom we're chasing) versus dlopen() itself being
- * blocked for this process regardless of where the .so lives. Runs once,
- * before the first real staging attempt. */
-static void nwa30_probe_once(void)
-{
-    static bool done = false;
-    if (done)
-        return;
-    done = true;
-
-    /* Test 1: create a neutrally-named file under our own new subdirectory. */
-    mkdir(NWA30_EXEC_CACHE_DIR, 0755);
-    char neutral[MAX_PATH];
-    snprintf(neutral, sizeof(neutral), "%s/probe.dat", NWA30_EXEC_CACHE_DIR);
-    int fd = open(neutral, O_WRONLY | O_CREAT | O_TRUNC, 0755);
-    if (fd < 0)
-        printf("nwa30_probe: open(%s) [codecache subdir]: %s\n", neutral, strerror(errno));
-    else
-    {
-        printf("nwa30_probe: open(%s) [codecache subdir]: ok\n", neutral);
-        close(fd);
-    }
-
-    /* Test 2: create a neutrally-named file directly in STAGE_DIR itself -
-     * the same directory the bootloader already wrote rockbox.sony and the
-     * .so libs into before exec. Tells apart "nothing new can be created
-     * under STAGE_DIR by the running app" from "only the codecache
-     * subdirectory specifically is blocked". */
-    fd = open("/tmp/rockbox/probe.dat", O_WRONLY | O_CREAT | O_TRUNC, 0755);
-    if (fd < 0)
-        printf("nwa30_probe: open(/tmp/rockbox/probe.dat) [STAGE_DIR itself]: %s\n",
-            strerror(errno));
-    else
-    {
-        printf("nwa30_probe: open(/tmp/rockbox/probe.dat) [STAGE_DIR itself]: ok\n");
-        close(fd);
-    }
-
-    /* Test 3: explicit runtime dlopen() of a .so the bootloader already
-     * staged and that is proven to work (it's linked in via DT_NEEDED at
-     * exec time - ALSA is clearly functioning elsewhere in this same log).
-     * The bootloader copies libs flat into STAGE_DIR, not a "lib"
-     * subdirectory - see boot_rockbox() in bootloader/nwz_linux.c. */
-    void *h = dlopen("/tmp/rockbox/libasound.so.2", RTLD_NOW);
-    if (h == NULL)
-        printf("nwa30_probe: dlopen(/tmp/rockbox/libasound.so.2, RTLD_NOW): %s\n",
-            dlerror());
-    else
-    {
-        printf("nwa30_probe: dlopen(/tmp/rockbox/libasound.so.2, RTLD_NOW): ok\n");
-        dlclose(h);
-    }
-    fflush(stdout);
-}
-
-static const char *nwa30_stage_for_exec(const char *fpath)
+static const char *nwa30_staged_path(const char *fpath)
 {
     static char staged[MAX_PATH];
     const char *base = strrchr(fpath, '/');
     base = base ? base + 1 : fpath;
-
-    nwa30_probe_once();
-
-    int mkdir_rc = mkdir(NWA30_EXEC_CACHE_DIR, 0755);
-    int mkdir_errno = errno;
-    struct stat dst;
-    int stat_rc = stat(NWA30_EXEC_CACHE_DIR, &dst);
-    printf("nwa30_stage_for_exec: mkdir(%s) -> %d (%s); stat -> %d (%s)%s\n",
-        NWA30_EXEC_CACHE_DIR, mkdir_rc, mkdir_rc < 0 ? strerror(mkdir_errno) : "ok",
-        stat_rc, stat_rc < 0 ? strerror(errno) : "ok",
-        stat_rc == 0 ? (S_ISDIR(dst.st_mode) ? ", isdir" : ", NOT a dir") : "");
+    snprintf(staged, sizeof(staged), "%s/%s", NWA30_STAGED_CODECS_DIR, base);
+    if (access(staged, R_OK) == 0)
+        return staged;
+    printf("nwa30_staged_path: %s not staged (%s), falling back to %s\n",
+        staged, strerror(errno), fpath);
     fflush(stdout);
-    if (mkdir_rc < 0 && mkdir_errno != EEXIST)
-        return fpath;
-    snprintf(staged, sizeof(staged), "%s/%s", NWA30_EXEC_CACHE_DIR, base);
-
-    int in = open(fpath, O_RDONLY);
-    if (in < 0)
-    {
-        printf("nwa30_stage_for_exec: open(%s): %s\n", fpath, strerror(errno));
-        fflush(stdout);
-        return fpath; /* let dlopen() report the real error */
-    }
-    int out = open(staged, O_WRONLY | O_CREAT | O_TRUNC, 0755);
-    if (out < 0)
-    {
-        printf("nwa30_stage_for_exec: open(%s): %s\n", staged, strerror(errno));
-        fflush(stdout);
-        close(in);
-        return fpath;
-    }
-    char buf[16384];
-    ssize_t len;
-    bool ok = true;
-    while (ok && (len = read(in, buf, sizeof(buf))) > 0)
-    {
-        ssize_t off = 0;
-        while (off < len)
-        {
-            ssize_t wr = write(out, buf + off, len - off);
-            if (wr <= 0)
-            {
-                printf("nwa30_stage_for_exec: write(%s): %s\n", staged,
-                    strerror(errno));
-                fflush(stdout);
-                ok = false;
-                break;
-            }
-            off += wr;
-        }
-    }
-    close(in);
-    close(out);
-    if (!ok)
-        return fpath;
-    /* tmpfs files land 0644 regardless of the open() mode above; dlopen()
-     * needs the exec bit or the PROT_EXEC mmap gets rejected the same way
-     * the original /contents copy was. */
-    if (chmod(staged, 0755) < 0)
-    {
-        printf("nwa30_stage_for_exec: chmod(%s): %s\n", staged, strerror(errno));
-        fflush(stdout);
-    }
-    return staged;
+    return fpath; /* let dlopen() report the real error */
 }
 #endif
 
@@ -177,7 +70,7 @@ void *lc_open(const char *filename, unsigned char *buf, size_t buf_size)
 
     const char *fpath = handle_special_dirs(filename, 0, path, sizeof(path));
 #ifdef SONY_NWA30
-    fpath = nwa30_stage_for_exec(fpath);
+    fpath = nwa30_staged_path(fpath);
 #endif
 
     void *handle = dlopen(fpath, RTLD_NOW);

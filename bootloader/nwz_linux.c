@@ -115,11 +115,13 @@ int get_icon_y(void)
         return LCD_HEIGHT * 41 / 100 - ICON_HEIGHT / 2;
 }
 
-#define ROCKBOX_BIN     "/contents/.rockbox/rockbox.sony"
-#define ROCKBOX_LIB_DIR "/contents/.rockbox/lib"
+#define ROCKBOX_BIN        "/contents/.rockbox/rockbox.sony"
+#define ROCKBOX_LIB_DIR    "/contents/.rockbox/lib"
+#define ROCKBOX_CODECS_DIR "/contents/.rockbox/codecs"
 /* Staging area on a filesystem we are allowed to execute from, see
  * boot_rockbox(). /tmp is a 32MB tmpfs on this platform. */
 #define STAGE_DIR       "/tmp/rockbox"
+#define STAGE_CODECS_DIR STAGE_DIR "/codecs"
 
 /* copy a file, giving the copy the requested mode. Returns true on success. */
 static bool copy_file(const char *src, const char *dst, mode_t mode)
@@ -163,6 +165,31 @@ static bool copy_file(const char *src, const char *dst, mode_t mode)
     if(!ok)
         unlink(dst);
     return ok;
+}
+
+/* Copy every regular file in src_dir into dst_dir (which is created if
+ * missing), non-recursively. Used to stage both the .so libraries and the
+ * codecs into tmpfs - see the comment above boot_rockbox() for why. */
+static void copy_dir_flat(const char *src_dir, const char *dst_dir)
+{
+    mkdir(dst_dir, 0755);
+    DIR *dir = opendir(src_dir);
+    if(dir == NULL)
+        return;
+    struct dirent *entry;
+    while((entry = readdir(dir)))
+    {
+        /* big enough for the prefix plus any name readdir can return */
+        char src[sizeof(ROCKBOX_LIB_DIR) + 1 + NAME_MAX];
+        char dst[sizeof(STAGE_CODECS_DIR) + 1 + NAME_MAX];
+        if(entry->d_name[0] == '.')
+            continue;
+        snprintf(src, sizeof(src), "%s/%s", src_dir, entry->d_name);
+        snprintf(dst, sizeof(dst), "%s/%s", dst_dir, entry->d_name);
+        if(!copy_file(src, dst, 0755))
+            printf("cannot stage %s: %s\n", src, strerror(errno));
+    }
+    closedir(dir);
 }
 
 /* Copy everything Rockbox needs to run into STAGE_DIR and run it from there.
@@ -225,25 +252,16 @@ static bool boot_rockbox(void)
         /* Bring along the libraries we ship next to it: the binary looks for
          * them by absolute path on the user partition, which may be just as
          * unusable, so point the loader at the copies instead. */
-        DIR *dir = opendir(ROCKBOX_LIB_DIR);
-        if(dir != NULL)
-        {
-            struct dirent *entry;
-            while((entry = readdir(dir)))
-            {
-                /* big enough for the prefix plus any name readdir can return */
-                char src[sizeof(ROCKBOX_LIB_DIR) + 1 + NAME_MAX];
-                char dst[sizeof(STAGE_DIR) + 1 + NAME_MAX];
-                if(entry->d_name[0] == '.')
-                    continue;
-                snprintf(src, sizeof(src), "%s/%s", ROCKBOX_LIB_DIR, entry->d_name);
-                snprintf(dst, sizeof(dst), "%s/%s", STAGE_DIR, entry->d_name);
-                if(!copy_file(src, dst, 0755))
-                    printf("cannot stage library %s: %s\n", entry->d_name,
-                        strerror(errno));
-            }
-            closedir(dir);
-        }
+        copy_dir_flat(ROCKBOX_LIB_DIR, STAGE_DIR);
+        /* Codecs are dlopen()'d at runtime, not linked at exec time, and
+         * that runtime dlopen() fails whether the file comes straight from
+         * /contents (PROT_EXEC mmap rejected) or gets staged into tmpfs by
+         * rockbox.sony itself (file creation under STAGE_DIR from the
+         * *running* app is rejected too - only files that existed before
+         * exec, like this copy, are usable). So stage them here instead,
+         * the same way as the libraries above; see lc-unix.c's
+         * nwa30_stage_for_exec() for the matching lookup. */
+        copy_dir_flat(ROCKBOX_CODECS_DIR, STAGE_CODECS_DIR);
         setenv("LD_LIBRARY_PATH", STAGE_DIR, 1);
         printf("booting %s\n", path);
         fflush(stdout);
