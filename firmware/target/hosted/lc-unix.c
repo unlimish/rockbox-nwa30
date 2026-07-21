@@ -46,13 +46,17 @@ static const char *nwa30_stage_for_exec(const char *fpath)
     const char *base = strrchr(fpath, '/');
     base = base ? base + 1 : fpath;
 
-    if (mkdir(NWA30_EXEC_CACHE_DIR, 0755) < 0 && errno != EEXIST)
-    {
-        printf("nwa30_stage_for_exec: mkdir(%s): %s\n",
-            NWA30_EXEC_CACHE_DIR, strerror(errno));
-        fflush(stdout);
+    int mkdir_rc = mkdir(NWA30_EXEC_CACHE_DIR, 0755);
+    int mkdir_errno = errno;
+    struct stat dst;
+    int stat_rc = stat(NWA30_EXEC_CACHE_DIR, &dst);
+    printf("nwa30_stage_for_exec: mkdir(%s) -> %d (%s); stat -> %d (%s)%s\n",
+        NWA30_EXEC_CACHE_DIR, mkdir_rc, mkdir_rc < 0 ? strerror(mkdir_errno) : "ok",
+        stat_rc, stat_rc < 0 ? strerror(errno) : "ok",
+        stat_rc == 0 ? (S_ISDIR(dst.st_mode) ? ", isdir" : ", NOT a dir") : "");
+    fflush(stdout);
+    if (mkdir_rc < 0 && mkdir_errno != EEXIST)
         return fpath;
-    }
     snprintf(staged, sizeof(staged), "%s/%s", NWA30_EXEC_CACHE_DIR, base);
 
     int in = open(fpath, O_RDONLY);
