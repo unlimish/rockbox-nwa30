@@ -404,11 +404,10 @@ int button_read_device(BDATA)
 #endif
 
 #ifdef BUTTON_HOLD_KEYCODE
-    /* TODO: the hold switch polarity has not been confirmed on the device yet,
-     * and reading it wrong here silently swallows every button and touch. Until
-     * the log has told us which way round it is, keep tracking and reporting the
-     * state (button_hold(), backlight) but do not let it suppress input, so a
-     * stuck/inverted reading cannot lock the player out. */
+    /* Polarity confirmed on the device: it reads "not held" at boot with the
+     * switch off, and engaging it turns the backlight off as it should. */
+    if(hold_key_status)
+        return 0;
 #endif
 
     return btns;
