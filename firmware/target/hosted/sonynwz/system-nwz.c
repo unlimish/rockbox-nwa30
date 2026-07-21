@@ -317,8 +317,35 @@ static void find_thread_owner(int pid, const char *cmdline, const char *thread,
     closedir(task);
 }
 
+/* Services we must leave running: without these the player stops appearing as
+ * a USB drive, which is how it is loaded with music and how we get the log
+ * back. Everything else in the framework can sit still while Rockbox runs. */
+static bool service_is_needed(const char *cmdline)
+{
+    static const char *needed[] =
+    {
+        "UsbMgrServiceFw",           /* USB itself */
+        "UsbHostConnectionService",  /* and the connection state it acts on */
+        "StorageMgrServiceFw",       /* the storage behind the drive */
+    };
+    for(unsigned i = 0; i < sizeof(needed) / sizeof(needed[0]); i++)
+        if(strstr(cmdline, needed[i]) != NULL)
+            return true;
+    return false;
+}
+
 static void handle_hang_checker(int pid, const char *cmdline)
 {
+    /* "fr_job" turned out to be a worker thread the framework core gives every
+     * one of its daemons, so it identifies the framework rather than the one
+     * service that restarts us. Freezing all of them does stop the restarts,
+     * but it also took USB with it. Spare the services that USB needs until we
+     * know which daemon actually runs the hang check. */
+    if(service_is_needed(cmdline))
+    {
+        printf("leaving alone: pid %d %s\n", pid, cmdline);
+        return;
+    }
     find_thread_owner(pid, cmdline, "fr_job", true);
 }
 #endif
