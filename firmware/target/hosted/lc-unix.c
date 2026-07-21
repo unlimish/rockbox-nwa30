@@ -29,6 +29,8 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <errno.h>
+#include <string.h>
 
 /* /contents is the FAT/exFAT user partition; it cannot mmap files with
  * PROT_EXEC, so dlopen() on a codec or plugin loaded straight from there
@@ -44,15 +46,27 @@ static const char *nwa30_stage_for_exec(const char *fpath)
     const char *base = strrchr(fpath, '/');
     base = base ? base + 1 : fpath;
 
-    mkdir(NWA30_EXEC_CACHE_DIR, 0755);
+    if (mkdir(NWA30_EXEC_CACHE_DIR, 0755) < 0 && errno != EEXIST)
+    {
+        printf("nwa30_stage_for_exec: mkdir(%s): %s\n",
+            NWA30_EXEC_CACHE_DIR, strerror(errno));
+        fflush(stdout);
+        return fpath;
+    }
     snprintf(staged, sizeof(staged), "%s/%s", NWA30_EXEC_CACHE_DIR, base);
 
     int in = open(fpath, O_RDONLY);
     if (in < 0)
+    {
+        printf("nwa30_stage_for_exec: open(%s): %s\n", fpath, strerror(errno));
+        fflush(stdout);
         return fpath; /* let dlopen() report the real error */
+    }
     int out = open(staged, O_WRONLY | O_CREAT | O_TRUNC, 0755);
     if (out < 0)
     {
+        printf("nwa30_stage_for_exec: open(%s): %s\n", staged, strerror(errno));
+        fflush(stdout);
         close(in);
         return fpath;
     }
@@ -67,6 +81,9 @@ static const char *nwa30_stage_for_exec(const char *fpath)
             ssize_t wr = write(out, buf + off, len - off);
             if (wr <= 0)
             {
+                printf("nwa30_stage_for_exec: write(%s): %s\n", staged,
+                    strerror(errno));
+                fflush(stdout);
                 ok = false;
                 break;
             }
@@ -75,7 +92,17 @@ static const char *nwa30_stage_for_exec(const char *fpath)
     }
     close(in);
     close(out);
-    return ok ? staged : fpath;
+    if (!ok)
+        return fpath;
+    /* tmpfs files land 0644 regardless of the open() mode above; dlopen()
+     * needs the exec bit or the PROT_EXEC mmap gets rejected the same way
+     * the original /contents copy was. */
+    if (chmod(staged, 0755) < 0)
+    {
+        printf("nwa30_stage_for_exec: chmod(%s): %s\n", staged, strerror(errno));
+        fflush(stdout);
+    }
+    return staged;
 }
 #endif
 
