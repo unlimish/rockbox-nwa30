@@ -363,6 +363,39 @@ static void nwa30_set_bool_if_present(const char *name, bool val)
  * so the only way to drive the hardware volume correctly is to read the table
  * off the device. Print it once so the mapping can be built from real values
  * instead of guessed. */
+/* Let the PCM device be chosen without rebuilding.
+ *
+ * /proc/asound/pcm shows six devices, and only device 1 - the one we use - is
+ * on the "STD" DAI; every other is "ICX", Sony's own. Their player is 10dB
+ * louder at the same codec volume, so which of these it actually opens is
+ * worth trying rather than arguing about, and each attempt otherwise costs a
+ * reflash. Read the device from a file if one is there:
+ *
+ *     echo hw:0,4 > /contents/.rockbox/pcm_device.txt
+ *
+ * Delete the file to go back to the built-in default. */
+static void nwa30_apply_pcm_override(void)
+{
+    FILE *f = fopen("/.rockbox/pcm_device.txt", "re");
+    if(f == NULL)
+    {
+        printf("audio: pcm device %s (no override file)\n",
+            DEFAULT_PLAYBACK_DEVICE);
+        return;
+    }
+    static char dev[32];
+    if(fgets(dev, sizeof(dev), f) != NULL)
+    {
+        dev[strcspn(dev, " \t\r\n")] = 0;
+        if(dev[0] != 0)
+        {
+            pcm_alsa_set_playback_device(dev);
+            printf("audio: pcm device %s (from pcm_device.txt)\n", dev);
+        }
+    }
+    fclose(f);
+}
+
 /* List a directory, so a guess at a path can be replaced by what is there. */
 static void nwa30_list_dir(const char *path)
 {
@@ -395,6 +428,7 @@ static void nwa30_dump_volume_table(void)
         "/proc/icx_audio_cxd3778gf_data/hvt",
     };
     nwa30_list_dir("/proc/icx_audio_cxd3778gf_data");
+    nwa30_apply_pcm_override();
     for(unsigned i = 0; i < sizeof(paths) / sizeof(paths[0]); i++)
     {
         FILE *f = fopen(paths[i], "re");
