@@ -540,6 +540,10 @@ void audiohw_preinit(void)
     printf("Codec: %s\n", nwz_get_codec_name());
 }
 
+/* The codec's own volume control. Not "Master Volume", which is the SoC
+ * mixer's and sits before it. */
+#define NWA30_VOLUME_CTL "master volume"
+
 void audiohw_postinit(void)
 {
 }
@@ -563,12 +567,59 @@ static void nwz_set_driver_vol(int vol)
 void audiohw_set_volume(int vol_l, int vol_r)
 {
 #ifdef SONY_NWA30
-    /* The Hagoromo volume curve is defined by a model-specific table loaded
-     * into the codec (see /proc/icx_audio_cxd3778gf_data/ovt), so we cannot
-     * reproduce it here. Instead keep the hardware "master volume" at maximum
-     * and do everything with the digital volume, which is always safe. */
+    /* Prefer the codec's own volume. Attenuating in software throws away bits
+     * - at -43dB, which is where the digital range ends, only about a third of
+     * the 16 the DAC takes are left - whereas the hardware attenuates after
+     * the converter and keeps them all.
+     *
+     * The curve is not ours to reproduce: Sony loads a model-specific table
+     * into the codec, and the /proc entry that would expose it does not exist
+     * on this player. But ALSA publishes what each step is worth in dB as a
+     * TLV, so ask for that and place the volume from measured values instead
+     * of guessing what "0..120" means. Fall back to the digital volume if the
+     * control turns out to have no dB information after all. */
+    static bool hw_vol_checked = false;
+    static bool hw_vol_ok = false;
+    static long hw_min, hw_max, hw_min_mdb, hw_step_mdb;
+    if(!hw_vol_checked)
+    {
+        hw_vol_checked = true;
+        hw_vol_ok = alsa_controls_get_range(NWA30_VOLUME_CTL, &hw_min, &hw_max) &&
+                    alsa_controls_get_db_range(NWA30_VOLUME_CTL, &hw_min_mdb,
+                                               &hw_step_mdb) &&
+                    hw_step_mdb > 0 && hw_max > hw_min;
+        if(hw_vol_ok)
+            printf("audio: '%s' %ld..%ld = %ld..%ld dB in %ld.%02ld dB steps\n",
+                NWA30_VOLUME_CTL, hw_min, hw_max, hw_min_mdb / 100,
+                (hw_min_mdb + (hw_max - hw_min) * hw_step_mdb) / 100,
+                hw_step_mdb / 100, hw_step_mdb % 100);
+        else
+            printf("audio: '%s' has no usable dB scale, keeping volume in software\n",
+                NWA30_VOLUME_CTL);
+        fflush(stdout);
+    }
+
     int min_pcm = -430;
     int max_pcm = 0;
+    if(hw_vol_ok)
+    {
+        /* the driver takes one value for both channels, so use the louder and
+         * leave any balance to the digital volume below */
+        int vol = MAX(vol_l, vol_r);
+        /* requested volume is in tenth-dB, the TLV is in hundredths */
+        long step = (vol * 10 - hw_min_mdb + hw_step_mdb / 2) / hw_step_mdb + hw_min;
+        if(step < hw_min)
+            step = hw_min;
+        if(step > hw_max)
+            step = hw_max;
+        long lstep = step;
+        alsa_controls_set_ints(NWA30_VOLUME_CTL, 1, &lstep);
+        /* what the hardware could not place exactly, and the balance, are left
+         * to the digital volume - a couple of dB at most */
+        long placed_tenth_db = (hw_min_mdb + (step - hw_min) * hw_step_mdb) / 10;
+        vol_l -= placed_tenth_db;
+        vol_r -= placed_tenth_db;
+    }
     if(vol_l < min_pcm)
         vol_l = min_pcm;
     if(vol_l > max_pcm)

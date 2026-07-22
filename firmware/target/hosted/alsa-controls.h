@@ -40,6 +40,13 @@ bool alsa_has_control(const char *name);
 int alsa_controls_find(const char *name);
 /* return the type of a control, SND_CTL_ELEM_TYPE_NONE if there is no such one */
 snd_ctl_elem_type_t alsa_controls_get_type(const char *name);
+
+/* Integer controls carry their usable range, and often a TLV describing what
+ * those steps mean in dB. A driver that must place a volume accurately needs
+ * both and can guess neither, so expose them. alsa_controls_get_db_range()
+ * returns false when the control has no dB information. */
+bool alsa_controls_get_range(const char *name, long *min, long *max);
+bool alsa_controls_get_db_range(const char *name, long *min_mdb, long *step_mdb);
 /* print every control with its type and enum items, for bring-up */
 void alsa_controls_dump(void);
 /* find a control element enum index by name, return -1 if not found */

@@ -281,11 +281,32 @@ static bool boot_rockbox(void)
         }
         if(pid > 0)
         {
+            /* Let go of the log while we wait. It lives on /contents, and an
+             * open file descriptor there is enough to keep the partition
+             * mounted - which stops Rockbox handing it to a USB host, since
+             * the umount init does on its behalf then fails with EBUSY.
+             * Nothing is printed here anyway: we are about to block. */
+            int saved_out = dup(fileno(stdout));
+            int devnull = open("/dev/null", O_WRONLY);
+            if(devnull >= 0)
+            {
+                fflush(stdout);
+                fflush(stderr);
+                dup2(devnull, fileno(stdout));
+                dup2(devnull, fileno(stderr));
+                close(devnull);
+            }
             /* Wait for it, so that picking Rockbox and coming back out of it
              * returns here. If we are killed first, Rockbox keeps running and
              * whatever replaces us will see it and stand aside. */
             int status;
             waitpid(pid, &status, 0);
+            if(saved_out >= 0)
+            {
+                dup2(saved_out, fileno(stdout));
+                dup2(saved_out, fileno(stderr));
+                close(saved_out);
+            }
             printf("rockbox exited (status %d)\n", status);
             return true;
         }

@@ -183,6 +183,38 @@ snd_ctl_elem_type_t alsa_controls_get_type(const char *name)
     return alsa_ctl_info[idx].type;
 }
 
+bool alsa_controls_get_range(const char *name, long *min, long *max)
+{
+    int idx = alsa_controls_find(name);
+    if(idx < 0 || alsa_ctl_info[idx].type != SND_CTL_ELEM_TYPE_INTEGER)
+        return false;
+    *min = alsa_ctl_info[idx].min;
+    *max = alsa_ctl_info[idx].max;
+    return true;
+}
+
+/* Read the control's dB scale, if it has one. ALSA reports it as a TLV: a
+ * type, a length and then, for a plain scale, the dB value of the lowest step
+ * and the size of a step, both in hundredths of a dB. Knowing this is the
+ * difference between placing a volume correctly and guessing what a driver's
+ * 0..120 means. */
+bool alsa_controls_get_db_range(const char *name, long *min_mdb, long *step_mdb)
+{
+    int idx = alsa_controls_find(name);
+    if(idx < 0)
+        return false;
+    /* header (type + length) plus the two values a DB_SCALE carries */
+    unsigned int tlv[4];
+    if(snd_ctl_elem_tlv_read(alsa_ctl, alsa_ctl_info[idx].id, tlv, sizeof(tlv)) < 0)
+        return false;
+    if(tlv[0] != SND_CTL_TLVT_DB_SCALE)
+        return false;
+    *min_mdb = (int)tlv[2];
+    /* the step is in the low 16 bits; the rest are flags (e.g. "mute at min") */
+    *step_mdb = (int)(tlv[3] & 0xffff);
+    return true;
+}
+
 bool alsa_has_control(const char *name)
 {
     return alsa_controls_find(name) >= 0;

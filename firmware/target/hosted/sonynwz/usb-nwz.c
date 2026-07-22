@@ -48,6 +48,8 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/wait.h>
+#include <dirent.h>
+#include <limits.h>
 #include "config.h"
 #include "disk.h"
 #include "usb.h"
@@ -97,6 +99,43 @@ static void resume_logging(void)
     if(fd > fileno(stderr))
         close(fd);
     setvbuf(stdout, NULL, _IOLBF, 0);
+}
+
+/* init unmounts on our behalf, so when that fails the reason is almost
+ * always that something still has a file open there - and it need not be us:
+ * the bootloader waits for Rockbox with its own log on the partition. Name
+ * whoever it is rather than leave the next person guessing. */
+static void report_contents_users(void)
+{
+    DIR *proc = opendir("/proc");
+    if(proc == NULL)
+        return;
+    struct dirent *ent;
+    while((ent = readdir(proc)))
+    {
+        if(ent->d_name[0] < '1' || ent->d_name[0] > '9')
+            continue;
+        char fddir[sizeof("/proc//fd") + NAME_MAX];
+        snprintf(fddir, sizeof(fddir), "/proc/%s/fd", ent->d_name);
+        DIR *fds = opendir(fddir);
+        if(fds == NULL)
+            continue;
+        struct dirent *fd;
+        while((fd = readdir(fds)))
+        {
+            char link[sizeof(fddir) + 1 + NAME_MAX];
+            char target[256];
+            snprintf(link, sizeof(link), "%s/%s", fddir, fd->d_name);
+            ssize_t n = readlink(link, target, sizeof(target) - 1);
+            if(n <= 0)
+                continue;
+            target[n] = 0;
+            if(strncmp(target, PIVOT_ROOT "/", sizeof(PIVOT_ROOT)) == 0)
+                printf("usb:   pid %s still has %s open\n", ent->d_name, target);
+        }
+        closedir(fds);
+    }
+    closedir(proc);
 }
 
 static bool contents_mounted(void)
@@ -181,6 +220,7 @@ int disk_unmount_all(void)
         resume_logging();
         printf("usb: init did not release %s (setprop %s)\n", PIVOT_ROOT,
             asked ? "ok" : "failed");
+        report_contents_users();
         fflush(stdout);
 #ifdef HAVE_MULTIDRIVE
         startup_rbhome();
