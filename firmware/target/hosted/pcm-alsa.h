@@ -23,7 +23,7 @@
 #include <config.h>
 #include <limits.h>
 
-#if defined(HAVE_ALSA_32BIT)
+#if defined(HAVE_ALSA_32BIT) || defined(SONY_NWA30)
 
 /* Set the PCM volume in dB: each sample with have this volume applied digitally
  * before being sent to ALSA. Effective range -79 dB to 0 dB */

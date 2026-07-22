@@ -153,6 +153,11 @@ target/hosted/sonynwz/nwz-db.c
 #if !defined(BOOTLOADER)
 target/hosted/sonynwz/nwzlinux-codec.c
 #endif
+#if defined(SONY_NWA30) && !defined(BOOTLOADER)
+/* only the Hagoromo players let us drive the mass storage gadget ourselves */
+target/hosted/sysfs.c
+target/hosted/sonynwz/usb-nwz.c
+#endif
 #endif
 
 #if !defined(BOOTLOADER)

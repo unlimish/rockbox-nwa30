@@ -76,3 +76,24 @@
  * and set_hwparams() was failing at the format step every time playback
  * started - which looked like a track that ends the instant it begins. */
 #undef HAVE_ALSA_32BIT
+
+/* hw:0,1 is the codec's "standard" PCM and it really only runs at 44.1kHz.
+ * It accepts a higher rate without complaining - snd_pcm_hw_params_set_rate_near()
+ * hands back exactly what it was asked for - but the clock does not follow, so
+ * the samples come out at 44.1kHz regardless: a 96kHz track played at 0.46x
+ * speed, pitched down to match, and 48kHz was slightly flat for the same
+ * reason. Claim only what the hardware does and let the DSP resample to it.
+ * (The 88.2/96k and up rates the family header lists belong to pcmC0D0p, the
+ * "hires" PCM, which we do not open yet.) */
+#undef HW_SAMPR_CAPS
+#define HW_SAMPR_CAPS   SAMPR_CAP_44
+
+/* The older players leave USB entirely to the stock firmware, but here the
+ * framework that would do it is frozen while Rockbox runs (see system-nwz.c),
+ * so the player turns up as an empty drive and the only way to copy anything
+ * onto it is to leave Rockbox first. We can drive the mass storage gadget
+ * ourselves - init.usbcfg.rc grants "system" write access to the one file that
+ * matters - so let the usb thread run and do it, see usb-nwz.c. */
+#ifndef SIMULATOR
+#undef USB_NONE
+#endif
