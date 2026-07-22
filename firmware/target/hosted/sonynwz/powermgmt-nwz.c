@@ -40,6 +40,10 @@ unsigned short percent_to_volt_charge[11] =
       3450, 3670, 3721, 3751, 3782, 3821, 3876, 3941, 4034, 4125, 4200
 };
 
+/* On the NW-A30 these three come from target/hosted/power-linux.c instead:
+ * there is no /dev/icx_power to ask, but the kernel's power supply class is
+ * there and gives a real charger state and battery percentage. */
+#ifndef SONY_NWA30
 unsigned int power_input_status(void)
 {
     unsigned pwr = 0;
@@ -90,3 +94,4 @@ bool charging_state(void)
     return (sts & NWZ_POWER_STATUS_CHARGE_STATUS) ==
         NWZ_POWER_STATUS_CHARGE_STATUS_CHARGING;
 }
+#endif /* !SONY_NWA30 */

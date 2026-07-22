@@ -153,10 +153,15 @@ target/hosted/sonynwz/nwz-db.c
 #if !defined(BOOTLOADER)
 target/hosted/sonynwz/nwzlinux-codec.c
 #endif
-#if defined(SONY_NWA30) && !defined(BOOTLOADER)
-/* only the Hagoromo players let us drive the mass storage gadget ourselves */
+#if defined(SONY_NWA30)
+/* battery and charger come from the standard power supply class here, not
+ * from the icx power device, which this platform does not have */
 target/hosted/sysfs.c
+target/hosted/power-linux.c
+#if !defined(BOOTLOADER)
+/* only the Hagoromo players let us drive the mass storage gadget ourselves */
 target/hosted/sonynwz/usb-nwz.c
+#endif
 #endif
 #endif
 

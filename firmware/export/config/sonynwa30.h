@@ -97,3 +97,16 @@
 #ifndef SIMULATOR
 #undef USB_NONE
 #endif
+
+/* /dev/icx_power does not exist on this platform, so the ioctl-based battery
+ * and charger readings the family uses always fail - the player has been
+ * running on an "assume nominal" fallback with no real battery indicator. The
+ * kernel's standard power supply class is there instead, which the generic
+ * target/hosted/power-linux.c already speaks, so use that and report a real
+ * percentage rather than a voltage guessed from a curve for a different cell. */
+#ifndef SIMULATOR
+#undef CONFIG_BATTERY_MEASURE
+#define CONFIG_BATTERY_MEASURE PERCENTAGE_MEASURE
+#define BATTERY_DEV_NAME "battery"
+#define POWER_DEV_NAME   "usb"
+#endif

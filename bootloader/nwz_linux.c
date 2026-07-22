@@ -434,6 +434,7 @@ enum boot_mode get_boot_mode(void)
     bool hold_status = button_hold();
     while(true)
     {
+#ifndef SONY_NWA30
         /* on usb detect, return to usb
          * FIXME this is a hack, we need proper usb detection */
         if(power_input_status() & POWER_INPUT_USB_CHARGER)
@@ -442,6 +443,14 @@ enum boot_mode get_boot_mode(void)
             save_boot_mode(mode);
             return BOOT_USB;
         }
+#else
+        /* Not on this player. BOOT_USB here means "run the original firmware
+         * because it is the only thing that can do USB", but the framework is
+         * still running while we sit in this menu and already presents the
+         * user partition to the host - so plugging the cable in is how the
+         * player gets loaded with music, and jumping to the OF the moment it
+         * is connected would take that away. */
+#endif
         /* inactivity detection */
         int timeout = last_activity + get_inactivity_tmo();
         if(TIME_AFTER(current_tick, timeout))

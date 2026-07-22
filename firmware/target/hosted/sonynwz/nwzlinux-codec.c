@@ -356,6 +356,37 @@ static void nwa30_set_bool_if_present(const char *name, bool val)
             name, type);
 }
 
+/* The volume curve lives in the codec driver, not in us: Sony loads a
+ * model-specific table and the "master volume" control is an index into it,
+ * so the only way to drive the hardware volume correctly is to read the table
+ * off the device. Print it once so the mapping can be built from real values
+ * instead of guessed. */
+static void nwa30_dump_volume_table(void)
+{
+    static const char *paths[] =
+    {
+        "/proc/icx_audio_cxd3778gf_data/ovt",
+        "/proc/icx_audio_cxd3778gf_data/hvt",
+    };
+    for(unsigned i = 0; i < sizeof(paths) / sizeof(paths[0]); i++)
+    {
+        FILE *f = fopen(paths[i], "re");
+        if(f == NULL)
+        {
+            printf("audio: no %s\n", paths[i]);
+            continue;
+        }
+        printf("--- %s ---\n", paths[i]);
+        char line[256];
+        int lines = 0;
+        while(fgets(line, sizeof(line), f) != NULL && lines++ < 200)
+            fputs(line, stdout);
+        printf("--- end of %s (%d lines) ---\n", paths[i], lines);
+        fclose(f);
+    }
+    fflush(stdout);
+}
+
 /* Same idea for an enumeration, e.g. "output device" -> "headphone". */
 static void nwa30_set_enum_if_present(const char *name, const char *value)
 {
@@ -428,6 +459,7 @@ void audiohw_preinit(void)
      * device kernel, but not their types, and setting a control with the wrong
      * type is fatal - so put the real list in the log to work from. */
     alsa_controls_dump();
+    nwa30_dump_volume_table();
     /* Unmute the whole playback path. The stock audio HAL
      * (libaudiohal-adleralsa.so) clears several mutes to start playback, and we
      * had only cleared one of them - "headphone mute" in particular was left on,

@@ -37,6 +37,7 @@ static struct ctl_t
     unsigned count; /* dimension of the control */
     unsigned items; /* number of items (for enums) */
     const char **enum_name; /* names of the enum, indexed by ALSA index */
+    long min, max; /* range (for integers) */
 } *alsa_ctl_info;
 
 /* also used by alsa_controls_dump(), so not limited to debug builds */
@@ -100,6 +101,13 @@ void alsa_controls_init(const char *name)
         }
         else
             alsa_ctl_info[i].items = 0;
+        if(alsa_ctl_info[i].type == SND_CTL_ELEM_TYPE_INTEGER)
+        {
+            alsa_ctl_info[i].min = snd_ctl_elem_info_get_min(info);
+            alsa_ctl_info[i].max = snd_ctl_elem_info_get_max(info);
+        }
+        else
+            alsa_ctl_info[i].min = alsa_ctl_info[i].max = 0;
     }
     snd_ctl_elem_info_free(info);
 
@@ -157,6 +165,10 @@ void alsa_controls_dump(void)
                 printf("%s '%s'", j == 0 ? "" : ",", alsa_ctl_info[i].enum_name[j]);
             printf("\n");
         }
+        /* the range matters as much as the name for a volume control, and
+         * there is no way to guess it */
+        if(alsa_ctl_info[i].type == SND_CTL_ELEM_TYPE_INTEGER)
+            printf("  range: %ld..%ld\n", alsa_ctl_info[i].min, alsa_ctl_info[i].max);
     }
 }
 
