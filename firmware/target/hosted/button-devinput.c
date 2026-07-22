@@ -229,6 +229,20 @@ static void handle_touchscreen_event(__u16 code, __s32 value)
 #else
 #define BDATA void
 #endif
+#ifdef SONY_NWA30
+/* The chatty per-touch and per-five-seconds lines below answered questions that
+ * are now settled, and they cost a write to the user partition to keep saying
+ * so. Create .rockbox/verbose_log.txt to bring them back for a session; it is
+ * read once, so the file can be left in place and the player restarted. */
+static bool nwa30_verbose_log(void)
+{
+    static int verbose = -1;
+    if(verbose < 0)
+        verbose = access("/contents/.rockbox/verbose_log.txt", F_OK) == 0;
+    return verbose != 0;
+}
+#endif
+
 int button_read_device(BDATA)
 {
     static int button_bitmap = 0;
@@ -390,7 +404,7 @@ int button_read_device(BDATA)
 #ifdef SONY_NWA30
         /* Raw vs mapped position, to check the calibration on the device. */
         static long last_log = 0;
-        if(TIME_AFTER(current_tick, last_log + HZ / 2))
+        if(nwa30_verbose_log() && TIME_AFTER(current_tick, last_log + HZ / 2))
         {
             last_log = current_tick;
             printf("touch: raw=%d,%d -> pixel=%d,%d\n",
@@ -401,14 +415,15 @@ int button_read_device(BDATA)
 #endif
 
 #ifdef SONY_NWA30
-    /* Something in the stock userspace kills us a while after we start, without
-     * warning: it sends SIGTERM, and when that is ignored it escalates to
-     * SIGKILL, which leaves nothing in the log. Print how long we have been
-     * running so the log shows how long we lasted - a consistent figure would
-     * mean a timeout is being enforced rather than something we did. */
+    /* Something in the stock userspace used to kill us a while after we start,
+     * without warning: SIGTERM, escalating to SIGKILL, leaving nothing in the
+     * log. Printing how long we had been running told us whether a timeout was
+     * being enforced. That question is answered, and a line every five seconds
+     * is a write to FAT32 on eMMC every five seconds, which keeps the storage
+     * and the CPU from settling down during playback. Off unless asked for. */
     {
         static long next_beat = 0;
-        if(TIME_AFTER(current_tick, next_beat))
+        if(nwa30_verbose_log() && TIME_AFTER(current_tick, next_beat))
         {
             next_beat = current_tick + 5 * HZ;
             printf("alive: %ld s\n", (long)(current_tick / HZ));
