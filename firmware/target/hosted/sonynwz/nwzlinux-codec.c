@@ -723,6 +723,15 @@ void audiohw_set_volume(int vol_l, int vol_r)
         alsa_controls_set_ints(NWA30_VOLUME_CTL, 1, &lstep);
         vol_l -= placed_tenth_db;
         vol_r -= placed_tenth_db;
+        /* The stock HAL drives only "master volume", "headphone amp" and
+         * "output device" - nothing else - so at step hw_max we are at the
+         * same ceiling it has. Say where each request lands, so "not loud
+         * enough" can be checked against what was actually set rather than
+         * argued about. */
+        printf("audio: volume %d.%d dB -> %s %ld/%ld, digital %d.%d dB\n",
+            vol / 10, abs(vol) % 10, NWA30_VOLUME_CTL, step, hw_max,
+            vol_l / 10, abs(vol_l) % 10);
+        fflush(stdout);
     }
     if(vol_l < min_pcm)
         vol_l = min_pcm;
