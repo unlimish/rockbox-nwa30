@@ -177,6 +177,28 @@ static int set_hwparams(snd_pcm_t *handle, unsigned long sampr)
     if (err < 0)
     {
         logf("Sample format not available for playback: %s", snd_strerror(err));
+#ifdef SONY_NWA30
+        /* This is where the A30 rejects us, and guessing a replacement has
+         * a long tail of wrong answers - ask the device which formats it
+         * will actually take instead. */
+        {
+            static const snd_pcm_format_t candidates[] = {
+                SND_PCM_FORMAT_S32_LE, SND_PCM_FORMAT_S32_BE,
+                SND_PCM_FORMAT_S24_LE, SND_PCM_FORMAT_S24_BE,
+                SND_PCM_FORMAT_S24_3LE, SND_PCM_FORMAT_S24_3BE,
+                SND_PCM_FORMAT_S16_LE, SND_PCM_FORMAT_S16_BE,
+                SND_PCM_FORMAT_U8, SND_PCM_FORMAT_FLOAT_LE,
+            };
+            printf("pcm: %s rejected; formats this device accepts:",
+                snd_pcm_format_name(format));
+            for (unsigned i = 0; i < ARRAYLEN(candidates); i++)
+                if (snd_pcm_hw_params_test_format(handle, params,
+                                                  candidates[i]) == 0)
+                    printf(" %s", snd_pcm_format_name(candidates[i]));
+            printf("\n");
+            fflush(stdout);
+        }
+#endif
         goto error;
     }
     /* set the count of channels */
