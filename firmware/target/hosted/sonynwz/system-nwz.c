@@ -49,6 +49,9 @@ static const char **kern_mod_list;
 bool os_file_exists(const char *ospath);
 
 int nwz_power_shutdown(void);
+#if !defined(BOOTLOADER)
+void nwz_thaw_framework(void);
+#endif
 
 void power_off(void)
 {
@@ -313,6 +316,41 @@ static void print_proc_list(void)
  * name alone does not say which one. Look through each process's threads for
  * it, which does.
  */
+/* Everything we SIGSTOP, so it can be started again on the way out.
+ *
+ * A frozen framework outlives us: the bootloader we return to is a separate
+ * process and does not know what we stopped, so the services that hand the
+ * user partition to the USB gadget stay stopped and the player shows up as an
+ * empty drive. That is exactly the state the user has to power-cycle out of in
+ * order to copy a new build over, so make leaving Rockbox put the framework
+ * back the way we found it. */
+#define MAX_FROZEN 64
+static int frozen_pids[MAX_FROZEN];
+static int nr_frozen;
+
+static void freeze_process(int pid)
+{
+    if(kill(pid, SIGSTOP) != 0)
+        return;
+    if(nr_frozen < MAX_FROZEN)
+        frozen_pids[nr_frozen++] = pid;
+    else
+        printf("warning: more than %d frozen processes, %d will stay stopped\n",
+            MAX_FROZEN, pid);
+}
+
+void nwz_thaw_framework(void)
+{
+    for(int i = 0; i < nr_frozen; i++)
+        kill(frozen_pids[i], SIGCONT);
+    if(nr_frozen > 0)
+    {
+        printf("resumed %d framework processes\n", nr_frozen);
+        fflush(stdout);
+    }
+    nr_frozen = 0;
+}
+
 static void find_thread_owner(int pid, const char *cmdline, const char *thread,
                               bool freeze)
 {
@@ -341,7 +379,7 @@ static void find_thread_owner(int pid, const char *cmdline, const char *thread,
                 if(freeze)
                 {
                     printf("freezing it\n");
-                    kill(pid, SIGSTOP);
+                    freeze_process(pid);
                 }
             }
         }
@@ -389,7 +427,7 @@ static void freeze_app_manager(int pid, const char *cmdline)
     if(strstr(cmdline, "appmgrservice") != NULL)
     {
         printf("freezing app manager (pid %d)\n", pid);
-        kill(pid, SIGSTOP);
+        freeze_process(pid);
     }
 }
 #endif
@@ -563,6 +601,11 @@ void system_init(void)
 #if !defined(BOOTLOADER)
     for_each_process(freeze_app_manager);
     for_each_process(handle_hang_checker);
+    /* Whatever we stopped has to be started again when we go, however we go:
+     * we hand control back to the bootloader, and a framework left frozen
+     * there cannot give the user partition to the USB gadget - the player
+     * appears as an empty drive and the only way out is a hard power off. */
+    atexit(nwz_thaw_framework);
 #endif
     /* some init not done on hosted targets */
     adc_init();
