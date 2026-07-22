@@ -224,6 +224,49 @@ static void print_mount_info(void)
     fclose(f);
 }
 
+/* What the battery node actually offers. We report a percentage from
+ * "capacity" and have never looked at the rest; whether "current_now" exists
+ * decides whether power draw can be measured at all, which is the only honest
+ * way to compare against the stock firmware. Printed once at startup. */
+static void print_battery_nodes(void)
+{
+    static const char *path = "/sys/class/power_supply/battery";
+    DIR *d = opendir(path);
+    if(d == NULL)
+    {
+        printf("battery: cannot open %s (%s)\n", path, strerror(errno));
+        return;
+    }
+    printf("--- %s ---\n", path);
+    struct dirent *e;
+    while((e = readdir(d)) != NULL)
+    {
+        if(e->d_name[0] == '.')
+            continue;
+        char file[PATH_MAX], value[64];
+        snprintf(file, sizeof(file), "%s/%s", path, e->d_name);
+        int fd = open(file, O_RDONLY);
+        if(fd < 0)
+        {
+            printf("  %-24s (unreadable: %s)\n", e->d_name, strerror(errno));
+            continue;
+        }
+        ssize_t n = read(fd, value, sizeof(value) - 1);
+        close(fd);
+        if(n < 0)
+            n = 0;
+        value[n] = 0;
+        /* values are one line each; keep the log to one line each too */
+        char *nl = strchr(value, '\n');
+        if(nl)
+            *nl = 0;
+        printf("  %-24s %s\n", e->d_name, value);
+    }
+    printf("--- end of battery ---\n");
+    closedir(d);
+    fflush(stdout);
+}
+
 /* Nothing to pet: the watchdog on this platform is kicked by the kernel. */
 void nwz_watchdog_pet(void)
 {
@@ -670,6 +713,7 @@ void system_init(void)
     print_boot_reason();
     print_restart_evidence();
     print_mount_info();
+    print_battery_nodes();
 
 #endif
     print_proc_list();
