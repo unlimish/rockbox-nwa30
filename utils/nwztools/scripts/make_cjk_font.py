@@ -46,21 +46,25 @@ def wanted_codepoints():
     return sorted(cps)
 
 
-def render(font, cp, size):
+def render(font, cp, ascent):
     """Rasterise one codepoint. Returns (bitmap rows as ints, w, h, xoff, yoff,
-    advance), all in pixels, with the origin on the baseline."""
+    advance), all in pixels, with the origin on the baseline.
+
+    Rendered through FreeType's monochrome mode rather than by thresholding a
+    greyscale image: the hinter then snaps stems to the pixel grid, so the two
+    uprights of a character like the kanji for "mouth" come out the same
+    weight. Thresholding an antialiased render leaves one of them a pixel
+    fatter than the other, which is very visible at this size."""
     ch = chr(cp)
     advance = int(round(font.getlength(ch)))
-    # generous canvas: some glyphs overshoot the nominal size
-    pad = size
-    img = Image.new("L", (size * 2 + pad * 2, size * 2 + pad * 2), 0)
+    # A 1-bit canvas makes PIL ask FreeType for a monochrome glyph, so the
+    # hinter runs; drawing onto a greyscale canvas and thresholding does not.
+    pad = ascent
+    size = ascent * 3
+    img = Image.new("1", (size, size), 0)
     draw = ImageDraw.Draw(img)
-    origin = (pad, pad + size)  # baseline at y = pad + size
-    draw.text(origin, ch, font=font, fill=255, anchor="ls")
-    # threshold first: getbbox() counts faint antialiased pixels that the
-    # 1-bit conversion below throws away, which would leave blank rows at the
-    # edges and shift the glyph off its baseline
-    img = img.point(lambda v: 255 if v >= 128 else 0)
+    origin = (pad, pad + ascent)  # baseline
+    draw.text(origin, ch, font=font, fill=1, anchor="ls")
     box = img.getbbox()
     if box is None:  # blank glyph, e.g. space
         return [], 0, 0, 0, 0, advance
@@ -71,7 +75,7 @@ def render(font, cp, size):
     for y in range(y0, y1):
         bits = 0
         for x in range(x0, x1):
-            bits = (bits << 1) | (1 if px[x, y] >= 128 else 0)
+            bits = (bits << 1) | (1 if px[x, y] else 0)
         # BDF pads each row to a whole number of bytes, on the right
         bits <<= (-w) % 8
         rows.append(bits)
@@ -101,7 +105,7 @@ def main():
 
     glyphs = []
     for i, cp in enumerate(cps):
-        glyphs.append((cp, render(font, cp, size)))
+        glyphs.append((cp, render(font, cp, ascent)))
         if i % 1000 == 0:
             print("  %d/%d" % (i, len(cps)), file=sys.stderr)
 
