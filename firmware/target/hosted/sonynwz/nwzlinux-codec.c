@@ -487,12 +487,33 @@ void audiohw_preinit(void)
     nwa30_set_bool_if_present("digital playback mute", false);
     nwa30_set_bool_if_present("headphone mute", false);
     nwa30_set_bool_if_present("Master Switch", true);
+    /* Pick the amplifier's gain range *before* routing anything to it. The
+     * dump taken at this point shows it powers up on 'normal', and changing
+     * it later - which is what the "DAC power mode" setting did - made no
+     * audible difference at all, as though the amp had already latched the
+     * value when it came up. Set it while the output is still off so it takes
+     * effect; the setting can still switch it afterwards. */
+    nwa30_set_enum_if_present("headphone smaster se gain mode", "high");
+    nwa30_set_enum_if_present("headphone smaster gain mode", "high");
+    nwa30_set_enum_if_present("headphone smaster btl gain mode", "high");
     /* Route the output to the headphone jack and turn its amp on. Without this
      * "output device" sits at 'off' and nothing is heard. The A35 has a
      * single-ended 3.5mm jack, so use the S-Master SE amp; values confirmed
      * from the device's own control list and the stock HAL. */
     nwa30_set_enum_if_present("output device", "headphone");
     nwa30_set_enum_if_present("headphone amp", "smaster-se");
+    /* and say what it reads back, so the next log shows whether the ordering
+     * was what mattered */
+    {
+        long v = 0;
+        if(alsa_controls_get_type("headphone smaster se gain mode") ==
+           SND_CTL_ELEM_TYPE_ENUMERATED)
+        {
+            alsa_controls_get("headphone smaster se gain mode",
+                              SND_CTL_ELEM_TYPE_ENUMERATED, 1, &v);
+            printf("audio: se gain mode after routing reads %ld\n", v);
+        }
+    }
     /* make sure the tuner passthrough is not mixed into playback */
     audiohw_set_playback_src(NWZ_PLAYBACK);
     /* Keep the hardware "master volume" at its maximum and do the actual
