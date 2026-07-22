@@ -119,12 +119,24 @@
 #undef MULTIDRIVE_DIR
 #define MULTIDRIVE_DIR "/contents_ext"
 
-/* Scanning "/" alone finds only the internal memory. The card shows up in the
- * root as a link, and tagcache follows links by calling readlink() on them -
- * but this one is not a link on disk, it is an entry Rockbox makes up for the
- * second volume, so readlink() fails and the card is quietly dropped. Name it
- * explicitly instead, so "Update now" covers both. */
-#define DEFAULT_TAGCACHE_SCAN_PATHS "/:/<microSD1>"
+/* Scanning "/" alone finds only the internal memory, and the card has to be
+ * named first or it is dropped again.
+ *
+ * tagcache refuses a search root that lies inside one it already has, and it
+ * decides that with a plain strncmp() against the root's length
+ * (search_root_exists() in tagcache.c). A root of "/" is one character long,
+ * so *every* later path matches it and is thrown away - including the card,
+ * which on this player is not inside "/" at all: Rockbox's "/" is /contents
+ * and the card is /contents_ext. The same test also kills the automatic route,
+ * where check_dir() meets the made-up <microSD1> link and offers /contents_ext
+ * as a new root. (The code that would expand "/" into every volume is compiled
+ * out for APPLICATION builds.)
+ *
+ * Putting the card first makes the length test work the other way round: "/"
+ * does not start with "/<microSD1>", so it survives and both get scanned.
+ * The card is then already a root when the link turns up, so it is not
+ * scanned twice. */
+#define DEFAULT_TAGCACHE_SCAN_PATHS "/<microSD1>:/"
 
 #ifndef SIMULATOR
 #undef CONFIG_BATTERY_MEASURE
