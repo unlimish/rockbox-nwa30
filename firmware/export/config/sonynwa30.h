@@ -119,6 +119,13 @@
 #undef MULTIDRIVE_DIR
 #define MULTIDRIVE_DIR "/contents_ext"
 
+/* Scanning "/" alone finds only the internal memory. The card shows up in the
+ * root as a link, and tagcache follows links by calling readlink() on them -
+ * but this one is not a link on disk, it is an entry Rockbox makes up for the
+ * second volume, so readlink() fails and the card is quietly dropped. Name it
+ * explicitly instead, so "Update now" covers both. */
+#define DEFAULT_TAGCACHE_SCAN_PATHS "/:/<microSD1>"
+
 #ifndef SIMULATOR
 #undef CONFIG_BATTERY_MEASURE
 #define CONFIG_BATTERY_MEASURE PERCENTAGE_MEASURE

@@ -436,10 +436,12 @@ static const char graphic_numeric[] = "graphic,numeric";
 
 #endif /* HAVE_RECORDING */
 
+#ifndef DEFAULT_TAGCACHE_SCAN_PATHS
 #if (CONFIG_PLATFORM & PLATFORM_ANDROID)
 #define DEFAULT_TAGCACHE_SCAN_PATHS "/sdcard"
 #else
 #define DEFAULT_TAGCACHE_SCAN_PATHS "/"
+#endif
 #endif
 
 #ifdef HAVE_BACKLIGHT
