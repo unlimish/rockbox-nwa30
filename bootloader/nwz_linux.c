@@ -722,7 +722,9 @@ void tools_screen(void)
 int open_log(void)
 {
     /* open regular log file */
-    int fd = open("/contents/rockbox.log", O_RDWR | O_CREAT | O_APPEND);
+    /* O_CREAT without a mode is undefined behaviour - whatever happens to be
+     * on the stack is used - and this is the only log the port has. */
+    int fd = open("/contents/rockbox.log", O_RDWR | O_CREAT | O_APPEND, 0666);
     /* get its size */
     struct stat stat;
     if(fstat(fd, &stat) != 0)
@@ -734,7 +736,8 @@ int open_log(void)
     /* move file */
     rename("/contents/rockbox.log", "/contents/rockbox.log.1");
     /* re-open the file, truncate in case the move was unsuccessful */
-    return open("/contents/rockbox.log", O_RDWR | O_CREAT | O_APPEND | O_TRUNC);
+    return open("/contents/rockbox.log", O_RDWR | O_CREAT | O_APPEND | O_TRUNC,
+                0666);
 }
 
 int main(int argc, char **argv)
