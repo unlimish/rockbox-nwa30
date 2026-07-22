@@ -314,8 +314,10 @@ error:
     return err;
 }
 
-#if defined(HAVE_ALSA_32BIT)
-/* Multiplicative factors applied to each sample */
+#if defined(HAVE_ALSA_32BIT) || defined(SONY_NWA30)
+/* Multiplicative factors applied to each sample, 16.16 fixed point: unity
+ * (0dB) is 1<<16. In 32-bit mode that scaling doubles as the 16->32 bit
+ * widening; in 16-bit mode the result is shifted back down. */
 static int32_t dig_vol_mult_l = 0;
 static int32_t dig_vol_mult_r = 0;
 
@@ -386,10 +388,26 @@ static bool copy_frames(bool first)
             }
             else
 #endif
+#if !defined(HAVE_ALSA_32BIT) && defined(SONY_NWA30)
+            {
+                /* Same width as Rockbox, so no conversion - but the volume
+                 * still has to be applied somewhere, and this codec only
+                 * accepts S16_LE so the 32-bit path above never runs.
+                 * vol_db is never positive, so the product cannot overflow. */
+                const int16_t *pcm_ptr = pcm_data;
+                sample_t *sample_ptr = &frames[2*(period_size-frames_left)];
+                for (int i = 0; i < nframes; i++)
+                {
+                    *sample_ptr++ = ((int32_t)*pcm_ptr++ * dig_vol_mult_l) >> 16;
+                    *sample_ptr++ = ((int32_t)*pcm_ptr++ * dig_vol_mult_r) >> 16;
+                }
+            }
+#else
             {
                 /* Rockbox and PCM have same format: memcopy */
                 memcpy(&frames[2*(period_size-frames_left)], pcm_data, nframes * 4);
 	    }
+#endif
 #ifdef HAVE_RECORDING
             break;
         case SND_PCM_STREAM_CAPTURE:

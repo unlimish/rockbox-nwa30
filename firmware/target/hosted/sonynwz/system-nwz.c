@@ -330,6 +330,9 @@ static int nr_frozen;
 
 static void freeze_process(int pid)
 {
+    for(int i = 0; i < nr_frozen; i++)
+        if(frozen_pids[i] == pid)
+            return; /* already stopped, and already on the list */
     if(kill(pid, SIGSTOP) != 0)
         return;
     if(nr_frozen < MAX_FROZEN)
@@ -381,6 +384,12 @@ static void find_thread_owner(int pid, const char *cmdline, const char *thread,
                     printf("freezing it\n");
                     freeze_process(pid);
                 }
+                /* One hit is enough: the framework gives a process several
+                 * threads by this name, and matching each of them again used
+                 * to record the same pid over and over - enough to overflow
+                 * the table and leave real processes stopped for good. */
+                fclose(f);
+                break;
             }
         }
         fclose(f);

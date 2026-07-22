@@ -70,3 +70,9 @@
 /* override keypad: reuse the NWZ-A860 one (touchscreen + media keys) */
 #undef CONFIG_KEYPAD
 #define CONFIG_KEYPAD SONY_NWZA860_PAD
+
+/* The rest of the family takes 32-bit samples, but this player's CXD3778GF
+ * does not: asked what it accepts, hw:0,1 answers "S16_LE" and nothing else,
+ * and set_hwparams() was failing at the format step every time playback
+ * started - which looked like a track that ends the instant it begins. */
+#undef HAVE_ALSA_32BIT
