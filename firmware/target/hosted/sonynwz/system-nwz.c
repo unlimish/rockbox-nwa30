@@ -208,11 +208,16 @@ static void print_mount_info(void)
     FILE *f = fopen("/proc/mounts", "re");
     if(f == NULL)
         return;
-    printf("--- mounts (/contents, /tmp) ---\n");
+    printf("--- mounts (/contents, /contents_ext, /tmp) ---\n");
     char line[512];
     while(fgets(line, sizeof(line), f))
     {
-        if(strstr(line, " /contents ") || strstr(line, " /tmp "))
+        /* /contents_ext is the memory card. It has to be listed separately:
+         * matching " /contents " on purpose excludes it, which left the log
+         * silent about whether the card was mounted at all - exactly the
+         * question when the database comes back without it. */
+        if(strstr(line, " /contents ") || strstr(line, " /contents_ext ") ||
+           strstr(line, " /tmp "))
             fputs(line, stdout);
     }
     printf("--- end of mounts ---\n");
@@ -686,7 +691,17 @@ void system_init(void)
 
 void system_reboot(void)
 {
+#ifdef SONY_NWA30
+    /* reboot(2) wants CAP_SYS_BOOT and we run as "system", so a real restart
+     * is out of reach. Quitting is the next best thing and is what a reboot is
+     * wanted for here anyway: the bootloader shows its menu again when Rockbox
+     * returns, so this lands where the user was heading. Do not power off on
+     * the way - that suspends, and the player then has to be woken to get
+     * anywhere. The framework is thawed by the atexit handler. */
+    exit(0);
+#else
     power_off();
+#endif
 }
 
 #ifdef HAVE_BUTTON_DATA

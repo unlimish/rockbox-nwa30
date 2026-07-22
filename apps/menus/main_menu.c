@@ -488,9 +488,31 @@ MENUITEM_FUNCTION(debug_menu_item, 0, ID2P(LANG_DEBUG),
 MENUITEM_FUNCTION(show_legal_item, 0, ID2P(LANG_LEGAL_NOTICES),
                   show_legal, NULL, Icon_NOICON);
 
+#ifdef SONY_NWA30
+/* This player cannot restart itself - reboot(2) needs CAP_SYS_BOOT and we run
+ * as "system" - but leaving Rockbox hands control back to our own bootloader,
+ * which shows its menu again. That is where a reboot is wanted for anyway:
+ * picking the stock firmware, or restarting after a new build was copied over
+ * USB. Without this the only way there is to hold power, suspend, and wake the
+ * player again. */
+static int reboot_now(void)
+{
+    if (yesno_pop(str(LANG_REBOOT_NOW)))
+        sys_reboot();
+    return 0;
+}
+
+MENUITEM_FUNCTION(reboot_item, 0, ID2P(LANG_REBOOT),
+                  reboot_now, NULL, Icon_NOICON);
+#endif /* SONY_NWA30 */
+
 MAKE_MENU(info_menu, ID2P(LANG_SYSTEM), 0, Icon_System_menu,
           &show_info_item, &show_credits_item,
-          &show_runtime_item, &show_legal_item, &debug_menu_item);
+          &show_runtime_item, &show_legal_item, &debug_menu_item
+#ifdef SONY_NWA30
+          , &reboot_item
+#endif
+          );
 /*      INFO MENU                  */
 /***********************************/
 

@@ -17169,3 +17169,17 @@
     *: "Finished"
   </voice>
 </phrase>
+<phrase>
+  id: LANG_REBOOT
+  desc: in the System menu, leave Rockbox and come back to the boot menu
+  user: core
+  <source>
+    *: "Reboot"
+  </source>
+  <dest>
+    *: "Reboot"
+  </dest>
+  <voice>
+    *: "Reboot"
+  </voice>
+</phrase>

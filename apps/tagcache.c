@@ -5125,6 +5125,14 @@ void do_tagcache_build(const char *path[])
 
         if (ret)
         {
+#ifdef SONY_NWA30
+            /* logf is off in the shipped build, and a root that is silently
+             * dropped here is indistinguishable from one that was scanned and
+             * held nothing. Say which roots survived and which opened. */
+            printf("tagcache: root '%s' %s\n", this->path,
+                   dir_exists(this->path) ? "exists" : "NOT FOUND");
+            fflush(stdout);
+#endif
             if (dir_exists(this->path))
                 ret = check_dir(this->path, true);
             else
