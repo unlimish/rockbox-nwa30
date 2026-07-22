@@ -169,6 +169,29 @@ void alsa_controls_dump(void)
          * there is no way to guess it */
         if(alsa_ctl_info[i].type == SND_CTL_ELEM_TYPE_INTEGER)
             printf("  range: %ld..%ld\n", alsa_ctl_info[i].min, alsa_ctl_info[i].max);
+        /* And the value the previous owner left behind: dumped before we
+         * touch anything, this is how the original firmware's settings can be
+         * read off the hardware and compared with ours. */
+        if(alsa_ctl_info[i].type == SND_CTL_ELEM_TYPE_INTEGER ||
+           alsa_ctl_info[i].type == SND_CTL_ELEM_TYPE_BOOLEAN ||
+           alsa_ctl_info[i].type == SND_CTL_ELEM_TYPE_ENUMERATED)
+        {
+            long vals[8];
+            unsigned n = alsa_ctl_info[i].count;
+            if(n > 8)
+                n = 8;
+            alsa_controls_get(alsa_ctl_info[i].name, alsa_ctl_info[i].type, n, vals);
+            printf("  value:");
+            for(unsigned j = 0; j < n; j++)
+            {
+                if(alsa_ctl_info[i].type == SND_CTL_ELEM_TYPE_ENUMERATED &&
+                   vals[j] >= 0 && vals[j] < (long)alsa_ctl_info[i].items)
+                    printf(" '%s'", alsa_ctl_info[i].enum_name[vals[j]]);
+                else
+                    printf(" %ld", vals[j]);
+            }
+            printf("\n");
+        }
     }
 }
 
