@@ -105,8 +105,12 @@ static void resume_logging(void)
  * always that something still has a file open there - and it need not be us:
  * the bootloader waits for Rockbox with its own log on the partition. Name
  * whoever it is rather than leave the next person guessing. */
-static void report_contents_users(void)
+static char contents_users[512];
+
+static void collect_contents_users(void)
 {
+    contents_users[0] = 0;
+    size_t used = 0;
     DIR *proc = opendir("/proc");
     if(proc == NULL)
         return;
@@ -130,8 +134,12 @@ static void report_contents_users(void)
             if(n <= 0)
                 continue;
             target[n] = 0;
-            if(strncmp(target, PIVOT_ROOT "/", sizeof(PIVOT_ROOT)) == 0)
-                printf("usb:   pid %s still has %s open\n", ent->d_name, target);
+            if(strncmp(target, PIVOT_ROOT "/", sizeof(PIVOT_ROOT)) == 0 &&
+               used < sizeof(contents_users) - 1)
+                used += snprintf(contents_users + used,
+                                 sizeof(contents_users) - used,
+                                 "usb:   pid %s still has %s open\n",
+                                 ent->d_name, target);
         }
         closedir(fds);
     }
@@ -217,10 +225,12 @@ int disk_unmount_all(void)
 
     if(!released)
     {
+        /* look before reopening the log, or we report our own file back */
+        collect_contents_users();
         resume_logging();
         printf("usb: init did not release %s (setprop %s)\n", PIVOT_ROOT,
             asked ? "ok" : "failed");
-        report_contents_users();
+        fputs(contents_users, stdout);
         fflush(stdout);
 #ifdef HAVE_MULTIDRIVE
         startup_rbhome();

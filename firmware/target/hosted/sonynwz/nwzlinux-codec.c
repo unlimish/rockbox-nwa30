@@ -543,6 +543,10 @@ void audiohw_preinit(void)
 /* The codec's own volume control. Not "Master Volume", which is the SoC
  * mixer's and sits before it. */
 #define NWA30_VOLUME_CTL "master volume"
+/* the range Rockbox asks for, in tenth-dB. Mirrors the AUDIOHW_SETTING in
+ * firmware/export/nwzlinux_codec.h, which declares -100..+4 dB. */
+#define NWA30_VOL_MIN (-1000)
+#define NWA30_VOL_MAX (40)
 
 void audiohw_postinit(void)
 {
@@ -580,21 +584,33 @@ void audiohw_set_volume(int vol_l, int vol_r)
      * control turns out to have no dB information after all. */
     static bool hw_vol_checked = false;
     static bool hw_vol_ok = false;
+    static bool hw_vol_has_db = false;
     static long hw_min, hw_max, hw_min_mdb, hw_step_mdb;
     if(!hw_vol_checked)
     {
         hw_vol_checked = true;
         hw_vol_ok = alsa_controls_get_range(NWA30_VOLUME_CTL, &hw_min, &hw_max) &&
-                    alsa_controls_get_db_range(NWA30_VOLUME_CTL, &hw_min_mdb,
-                                               &hw_step_mdb) &&
-                    hw_step_mdb > 0 && hw_max > hw_min;
-        if(hw_vol_ok)
+                    hw_max > hw_min;
+        /* A dB scale is the accurate way to place the volume, but this
+         * player's driver does not publish one, so fall back to spreading
+         * Rockbox's range evenly over the control's steps. That keeps the
+         * attenuation in the codec, where it costs no bits; it only means the
+         * knob may not feel perfectly even, since we cannot know how Sony
+         * spaced the steps. */
+        hw_vol_has_db = hw_vol_ok &&
+                        alsa_controls_get_db_range(NWA30_VOLUME_CTL, &hw_min_mdb,
+                                                   &hw_step_mdb) &&
+                        hw_step_mdb > 0;
+        if(hw_vol_has_db)
             printf("audio: '%s' %ld..%ld = %ld..%ld dB in %ld.%02ld dB steps\n",
                 NWA30_VOLUME_CTL, hw_min, hw_max, hw_min_mdb / 100,
                 (hw_min_mdb + (hw_max - hw_min) * hw_step_mdb) / 100,
                 hw_step_mdb / 100, hw_step_mdb % 100);
+        else if(hw_vol_ok)
+            printf("audio: '%s' %ld..%ld, no dB scale published - mapping %d..%d dB onto it\n",
+                NWA30_VOLUME_CTL, hw_min, hw_max, NWA30_VOL_MIN / 10, NWA30_VOL_MAX / 10);
         else
-            printf("audio: '%s' has no usable dB scale, keeping volume in software\n",
+            printf("audio: no '%s' control, keeping volume in software\n",
                 NWA30_VOLUME_CTL);
         fflush(stdout);
     }
@@ -606,17 +622,35 @@ void audiohw_set_volume(int vol_l, int vol_r)
         /* the driver takes one value for both channels, so use the louder and
          * leave any balance to the digital volume below */
         int vol = MAX(vol_l, vol_r);
-        /* requested volume is in tenth-dB, the TLV is in hundredths */
-        long step = (vol * 10 - hw_min_mdb + hw_step_mdb / 2) / hw_step_mdb + hw_min;
-        if(step < hw_min)
-            step = hw_min;
-        if(step > hw_max)
-            step = hw_max;
+        long step, placed_tenth_db;
+        if(hw_vol_has_db)
+        {
+            /* requested volume is in tenth-dB, the TLV is in hundredths */
+            step = (vol * 10 - hw_min_mdb + hw_step_mdb / 2) / hw_step_mdb + hw_min;
+            if(step < hw_min)
+                step = hw_min;
+            if(step > hw_max)
+                step = hw_max;
+            placed_tenth_db = (hw_min_mdb + (step - hw_min) * hw_step_mdb) / 10;
+        }
+        else
+        {
+            /* no dB information: spread our range evenly over the steps */
+            int v = vol;
+            if(v < NWA30_VOL_MIN)
+                v = NWA30_VOL_MIN;
+            if(v > NWA30_VOL_MAX)
+                v = NWA30_VOL_MAX;
+            long span = hw_max - hw_min;
+            step = hw_min + ((long)(v - NWA30_VOL_MIN) * span +
+                             (NWA30_VOL_MAX - NWA30_VOL_MIN) / 2) /
+                            (NWA30_VOL_MAX - NWA30_VOL_MIN);
+            /* we cannot say what the hardware actually placed, so do not ask
+             * the digital volume to make up a difference we cannot measure */
+            placed_tenth_db = vol;
+        }
         long lstep = step;
         alsa_controls_set_ints(NWA30_VOLUME_CTL, 1, &lstep);
-        /* what the hardware could not place exactly, and the balance, are left
-         * to the digital volume - a couple of dB at most */
-        long placed_tenth_db = (hw_min_mdb + (step - hw_min) * hw_step_mdb) / 10;
         vol_l -= placed_tenth_db;
         vol_r -= placed_tenth_db;
     }
