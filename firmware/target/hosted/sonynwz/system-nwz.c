@@ -400,6 +400,60 @@ static void find_thread_owner(int pid, const char *cmdline, const char *thread,
 /* Services we must leave running: without these the player stops appearing as
  * a USB drive, which is how it is loaded with music and how we get the log
  * back. Everything else in the framework can sit still while Rockbox runs. */
+/* Extra service names to spare, one per line, read once from
+ * /contents/.rockbox/usb_spare.txt.
+ *
+ * We cannot hand the partition to a USB host ourselves: writing
+ * sys.sony.config is refused, and so is ctl.start - init.svc.unmount_msc1
+ * comes back empty, meaning init never ran it. Only the framework can do it,
+ * and at the bootloader menu, where nothing is frozen, it does. So the
+ * question is which of the daemons we stop is the one that would have
+ * started the transition, and that is worth trying rather than reasoning
+ * about - but each guess otherwise costs a flash cycle. */
+static char spare_extra[512];
+
+static void load_spare_list(void)
+{
+    static bool loaded = false;
+    if(loaded)
+        return;
+    loaded = true;
+    FILE *f = fopen("/contents/.rockbox/usb_spare.txt", "re");
+    if(f == NULL)
+        return;
+    size_t n = fread(spare_extra, 1, sizeof(spare_extra) - 1, f);
+    fclose(f);
+    spare_extra[n] = 0;
+    printf("usb: also sparing services from usb_spare.txt:\n%s\n", spare_extra);
+    fflush(stdout);
+}
+
+static bool named_in_list(const char *list, const char *cmdline)
+{
+    const char *p = list;
+    while(*p)
+    {
+        /* one name per line; ignore blanks and anything commented out */
+        const char *end = p + strcspn(p, "\r\n");
+        char name[64];
+        size_t len = end - p;
+        if(len > 0 && len < sizeof(name) && *p != '#')
+        {
+            memcpy(name, p, len);
+            name[len] = 0;
+            /* trim trailing spaces so a stray one does not stop a match */
+            while(len > 0 && (name[len - 1] == ' ' || name[len - 1] == '\t'))
+                name[--len] = 0;
+            if(len > 0 && strstr(cmdline, name) != NULL)
+                return true;
+        }
+        p = end;
+        while(*p == '\r' || *p == '\n')
+            p++;
+    }
+    return false;
+}
+
 static bool service_is_needed(const char *cmdline)
 {
     static const char *needed[] =
@@ -411,7 +465,8 @@ static bool service_is_needed(const char *cmdline)
     for(unsigned i = 0; i < sizeof(needed) / sizeof(needed[0]); i++)
         if(strstr(cmdline, needed[i]) != NULL)
             return true;
-    return false;
+    load_spare_list();
+    return named_in_list(spare_extra, cmdline);
 }
 
 static void handle_hang_checker(int pid, const char *cmdline)
