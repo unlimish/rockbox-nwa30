@@ -28,6 +28,7 @@
 #include "audiohw.h"
 #include "nwzlinux_codec.h"
 #include "stdlib.h"
+#include <dirent.h>
 #include "fixedpoint.h"
 #include "panic.h"
 #include <sys/ioctl.h>
@@ -362,13 +363,38 @@ static void nwa30_set_bool_if_present(const char *name, bool val)
  * so the only way to drive the hardware volume correctly is to read the table
  * off the device. Print it once so the mapping can be built from real values
  * instead of guessed. */
+/* List a directory, so a guess at a path can be replaced by what is there. */
+static void nwa30_list_dir(const char *path)
+{
+    DIR *d = opendir(path);
+    if(d == NULL)
+    {
+        printf("audio: cannot list %s\n", path);
+        return;
+    }
+    printf("--- %s ---\n", path);
+    struct dirent *e;
+    while((e = readdir(d)))
+        if(e->d_name[0] != '.')
+            printf("  %s\n", e->d_name);
+    printf("--- end of %s ---\n", path);
+    closedir(d);
+}
+
 static void nwa30_dump_volume_table(void)
 {
+    /* Which PCM is which decides where the sound goes, and hw:0,1 was picked
+     * early from a guess; the stock HAL knows about hw:0,0 through hw:0,4.
+     * Print what the card actually offers. */
     static const char *paths[] =
     {
+        "/proc/asound/pcm",
+        "/proc/asound/cards",
+        "/proc/icx_audio_cxd3778gf_data",
         "/proc/icx_audio_cxd3778gf_data/ovt",
         "/proc/icx_audio_cxd3778gf_data/hvt",
     };
+    nwa30_list_dir("/proc/icx_audio_cxd3778gf_data");
     for(unsigned i = 0; i < sizeof(paths) / sizeof(paths[0]); i++)
     {
         FILE *f = fopen(paths[i], "re");
