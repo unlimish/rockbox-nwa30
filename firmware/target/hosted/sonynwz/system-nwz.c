@@ -397,19 +397,9 @@ static void find_thread_owner(int pid, const char *cmdline, const char *thread,
     closedir(task);
 }
 
-/* Services we must leave running: without these the player stops appearing as
- * a USB drive, which is how it is loaded with music and how we get the log
- * back. Everything else in the framework can sit still while Rockbox runs. */
 /* Extra service names to spare, one per line, read once from
- * /contents/.rockbox/usb_spare.txt.
- *
- * We cannot hand the partition to a USB host ourselves: writing
- * sys.sony.config is refused, and so is ctl.start - init.svc.unmount_msc1
- * comes back empty, meaning init never ran it. Only the framework can do it,
- * and at the bootloader menu, where nothing is frozen, it does. So the
- * question is which of the daemons we stop is the one that would have
- * started the transition, and that is worth trying rather than reasoning
- * about - but each guess otherwise costs a flash cycle. */
+ * /contents/.rockbox/usb_spare.txt. The list below is the one that works; this
+ * file only exists so another candidate can be tried without a flash cycle. */
 static char spare_extra[512];
 
 static void load_spare_list(void)
@@ -454,10 +444,27 @@ static bool named_in_list(const char *list, const char *cmdline)
     return false;
 }
 
+/* Services we must leave running: without these the player stops appearing as
+ * a USB drive, which is how it is loaded with music and how we get the log
+ * back. Everything else in the framework can sit still while Rockbox runs.
+ *
+ * We cannot hand the partition to a host ourselves - writing sys.sony.config
+ * is refused, and so is ctl.start, with init.svc.unmount_msc1 coming back
+ * empty to prove init never ran it. Only the framework can do it. So the whole
+ * chain that carries a cable insertion has to stay awake: WMPortService sees
+ * the connector, EventRouter carries the event, FuncMgrServiceFw and
+ * ConnMgrServiceFw decide what the player becomes, and the three Usb/Storage
+ * services do it. Freezing any one of them left the player an empty drive.
+ *
+ * PathMgrServiceFw must NOT be added: sparing it makes the machine restart. */
 static bool service_is_needed(const char *cmdline)
 {
     static const char *needed[] =
     {
+        "WMPortService",             /* the connector this player has */
+        "EventRouter",               /* delivers the insertion to the rest */
+        "FuncMgrServiceFw",          /* picks the mode to switch into */
+        "ConnMgrServiceFw",          /* and drives the switch */
         "UsbMgrServiceFw",           /* USB itself */
         "UsbHostConnectionService",  /* and the connection state it acts on */
         "StorageMgrServiceFw",       /* the storage behind the drive */
