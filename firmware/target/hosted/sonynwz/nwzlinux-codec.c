@@ -461,6 +461,29 @@ void audiohw_preinit(void)
      * type is fatal - so put the real list in the log to work from. */
     alsa_controls_dump();
     nwa30_dump_volume_table();
+    /* Put the output gain back where the stock firmware leaves it. This is
+     * its maximum, and it is where the loudness ceiling comes from; an
+     * earlier build drove it to zero for "low power" and left players
+     * silent, so restore it rather than trusting whatever is there. */
+    {
+        long lo, hi;
+        if(alsa_controls_get_range("master gain", &lo, &hi))
+        {
+            long want = hi;
+            alsa_controls_set_ints("master gain", 1, &want);
+            printf("audio: 'master gain' set to %ld (max of %ld..%ld)\n",
+                want, lo, hi);
+        }
+        /* HWGAIN is the other integer near the output; only look, since
+         * writing to a control whose meaning we have not established is how
+         * the player ended up mute last time. */
+        long hlo, hhi, hval = 0;
+        if(alsa_controls_get_range("HWGAIN", &hlo, &hhi))
+        {
+            alsa_controls_get("HWGAIN", SND_CTL_ELEM_TYPE_INTEGER, 1, &hval);
+            printf("audio: 'HWGAIN' %ld..%ld reads %ld\n", hlo, hhi, hval);
+        }
+    }
     /* Unmute the whole playback path. The stock audio HAL
      * (libaudiohal-adleralsa.so) clears several mutes to start playback, and we
      * had only cleared one of them - "headphone mute" in particular was left on,
@@ -758,24 +781,17 @@ void audiohw_set_power_mode(int mode)
     nwa30_set_enum_if_present("headphone smaster gain mode", gain);
     nwa30_set_enum_if_present("headphone smaster btl gain mode", gain);
 
-    /* Those three made no audible difference, so the amplifier's range is
-     * evidently not where the loudness is decided. There is a separate
-     * "master gain" integer alongside the volume; drive it too and say what
-     * it was, so the next log settles which of the two actually matters. */
-    long lo, hi;
+    /* Do NOT touch "master gain" here. It sits at its maximum already - which
+     * is why switching the amplifier's range changes nothing audible, the
+     * output is as loud as this hardware goes - and driving it down for "low"
+     * simply muted the player. Report it instead. */
+    long lo, hi, now = 0;
     if(alsa_controls_get_range("master gain", &lo, &hi))
     {
-        long was = 0;
-        alsa_controls_get("master gain", SND_CTL_ELEM_TYPE_INTEGER, 1, &was);
-        long want = high ? hi : lo;
-        alsa_controls_set_ints("master gain", 1, &want);
-        long now = 0;
         alsa_controls_get("master gain", SND_CTL_ELEM_TYPE_INTEGER, 1, &now);
-        printf("audio: 'master gain' %ld..%ld was %ld, set %ld, reads %ld\n",
-            lo, hi, was, want, now);
+        printf("audio: 'master gain' %ld..%ld reads %ld (left alone)\n",
+            lo, hi, now);
     }
-    else
-        printf("audio: no 'master gain' control\n");
     fflush(stdout);
 }
 #endif
