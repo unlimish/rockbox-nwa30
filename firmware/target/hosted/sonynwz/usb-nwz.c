@@ -265,49 +265,7 @@ static void report_prop(const char *name)
         printf("usb:   %s = (could not read)\n", name);
 }
 
-static bool set_prop(const char *name, const char *value)
-{
-    pid_t pid = fork();
-    if(pid < 0)
-        return false;
-    if(pid == 0)
-    {
-        execl("/system/bin/setprop", "setprop", name, value, (char *)NULL);
-        _exit(1);
-    }
-    int status;
-    waitpid(pid, &status, 0);
-    return status == 0;
-}
 
-/* Ask init to take the partition away, or give it back.
- *
- * Setting sys.sony.config is how the stock framework does it, but the write is
- * refused for us - setprop reports success and the property reads back
- * unchanged, which is what a denied property write looks like from here. init
- * only acts on a change, so nothing happened.
- *
- * Starting the service directly does not need that property: init.rc already
- * defines unmount_msc1 and mount_msc1, and ctl.start is the ordinary way to
- * ask for one. What that leaves us to do ourselves is the part the property
- * would also have done - pointing the gadget at the partition - and that we
- * can do, because init.usbcfg.rc hands us the LUN file.
- *
- * Try the property first anyway: if it ever does work, the stock path does
- * everything in the right order. */
-static bool ask_init(const char *config_value, const char *service)
-{
-    set_prop(NWZ_USB_CONFIG_PROP, config_value);
-
-    char now[64];
-    if(read_prop(NWZ_USB_CONFIG_PROP, now, sizeof(now)) &&
-       strcmp(now, config_value) == 0)
-        return true; /* the property took; init is doing all of it */
-
-    printf("usb: %s stayed '%s', starting %s instead\n", NWZ_USB_CONFIG_PROP,
-        now, service);
-    return set_prop("ctl.start", service);
-}
 
 /* Read a property back, so a setprop that returned success but changed
  * nothing can be told from one that took. init only runs its actions when the
@@ -357,26 +315,26 @@ int disk_unmount_all(void)
     chdir("/");
     release_contents_files();
 
-    bool asked = ask_init(NWZ_USB_CONFIG_MSC, NWZ_SVC_UNMOUNT);
-    /* only now let go of the log: init cannot unmount while we hold it open,
-     * but everything above needs to be able to say what it found */
+    /* Do not touch the property, the services or the gadget. Neither
+     * sys.sony.config nor ctl.start is ours to write - init.svc.unmount_msc1
+     * comes back empty, so init never ran it - and the framework does the
+     * whole thing correctly on its own once the daemon that drives it is left
+     * running (see the spare list in system-nwz.c). Reaching in anyway got the
+     * first cable working and the second showing an empty drive: our writes
+     * were leaving its state machine out of step with itself.
+     *
+     * So all we owe it is to stop using the disk and wait. That is exactly the
+     * position the bootloader menu is in, where this has always worked. */
     stop_logging();
-    bool released = asked && wait_for_contents(false);
-    if(released)
-    {
-        /* If init only unmounted for us, the gadget is still pointing at
-         * nothing - which is the empty drive the host has been showing. */
-        if(!sysfs_set_string(NWZ_MSC_LUN_FILE, NWZ_MSC_BACKING))
-            printf("usb: cannot hand %s to the gadget\n", NWZ_MSC_BACKING);
-    }
+    bool released = wait_for_contents(false);
 
     if(!released)
     {
         /* look before reopening the log, or we report our own file back */
         collect_contents_users();
         resume_logging();
-        printf("usb: init did not release %s (setprop %s)\n", PIVOT_ROOT,
-            asked ? "ok" : "failed");
+        printf("usb: %s was not released; is the daemon that drives USB in "
+            "usb_spare.txt?\n", PIVOT_ROOT);
         report_prop(NWZ_USB_CONFIG_PROP);
         /* init publishes this for every service it runs, so it says whether
          * ctl.start was accepted at all */
@@ -399,16 +357,13 @@ int disk_unmount_all(void)
  * number of successful mounts. */
 int disk_mount_all(void)
 {
-    /* let go of the partition before asking for it back */
-    sysfs_set_string(NWZ_MSC_LUN_FILE, "");
-    bool asked = ask_init(NWZ_USB_CONFIG_ADB, NWZ_SVC_MOUNT);
-    bool back = asked && wait_for_contents(true);
+    /* likewise on the way out: the framework puts it back */
+    bool back = wait_for_contents(true);
 
     resume_logging();
     if(!back)
     {
-        printf("usb: init did not give %s back (setprop %s)\n", PIVOT_ROOT,
-            asked ? "ok" : "failed");
+        printf("usb: %s did not come back\n", PIVOT_ROOT);
         fflush(stdout);
         return 0;
     }
