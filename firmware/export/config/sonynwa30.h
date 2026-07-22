@@ -104,6 +104,14 @@
  * kernel's standard power supply class is there instead, which the generic
  * target/hosted/power-linux.c already speaks, so use that and report a real
  * percentage rather than a voltage guessed from a curve for a different cell. */
+/* Rockbox ships no CJK font above 16px, so on a 480x800 screen every
+ * Japanese filename and tag was either unreadable or a row of boxes. Ship a
+ * 35px Noto Sans JP cut down to JIS X 0208 (kana, punctuation and the level
+ * 1+2 kanji) - about 7000 glyphs and a 1.1MB .fnt, against tens of megabytes
+ * for the full CJK repertoire. Regenerate with
+ * utils/nwztools/scripts/make_cjk_font.py. */
+#define DEFAULT_FONTNAME "35-Noto-Sans-CJK-JP"
+
 #ifndef SIMULATOR
 #undef CONFIG_BATTERY_MEASURE
 #define CONFIG_BATTERY_MEASURE PERCENTAGE_MEASURE
