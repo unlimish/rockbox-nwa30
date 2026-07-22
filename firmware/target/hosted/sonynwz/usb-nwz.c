@@ -130,6 +130,25 @@ static void collect_contents_users(void)
     {
         if(ent->d_name[0] < '1' || ent->d_name[0] > '9')
             continue;
+        /* A process's working directory and root hold a mount just as firmly
+         * as an open file, and neither shows up in /proc/<pid>/fd. */
+        for(unsigned k = 0; k < 2; k++)
+        {
+            const char *what = k ? "root" : "cwd";
+            char link[sizeof("/proc//root") + NAME_MAX];
+            char target[256];
+            snprintf(link, sizeof(link), "/proc/%s/%s", ent->d_name, what);
+            ssize_t n = readlink(link, target, sizeof(target) - 1);
+            if(n <= 0)
+                continue;
+            target[n] = 0;
+            if(strncmp(target, PIVOT_ROOT, sizeof(PIVOT_ROOT) - 1) == 0 &&
+               used < sizeof(contents_users) - 1)
+                used += snprintf(contents_users + used,
+                                 sizeof(contents_users) - used,
+                                 "usb:   pid %s has %s = %s\n",
+                                 ent->d_name, what, target);
+        }
         char fddir[sizeof("/proc//fd") + NAME_MAX];
         snprintf(fddir, sizeof(fddir), "/proc/%s/fd", ent->d_name);
         DIR *fds = opendir(fddir);
@@ -359,6 +378,10 @@ int disk_unmount_all(void)
         printf("usb: init did not release %s (setprop %s)\n", PIVOT_ROOT,
             asked ? "ok" : "failed");
         report_prop(NWZ_USB_CONFIG_PROP);
+        /* init publishes this for every service it runs, so it says whether
+         * ctl.start was accepted at all */
+        report_prop("init.svc." NWZ_SVC_UNMOUNT);
+        report_prop("init.svc." NWZ_SVC_MOUNT);
         report_prop("sys.usb.config");
         report_prop("sys.usb.state");
         report_prop("sys.usb.msc1");
