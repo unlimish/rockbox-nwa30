@@ -214,6 +214,46 @@ static bool set_usb_config(const char *value)
     return status == 0;
 }
 
+/* Read a property back, so a setprop that returned success but changed
+ * nothing can be told from one that took. init only runs its actions when the
+ * value actually changes, so this is the difference between "init ignored us"
+ * and "we never asked". */
+static void report_prop(const char *name)
+{
+    int fds[2];
+    if(pipe(fds) < 0)
+        return;
+    pid_t pid = fork();
+    if(pid < 0)
+    {
+        close(fds[0]);
+        close(fds[1]);
+        return;
+    }
+    if(pid == 0)
+    {
+        close(fds[0]);
+        dup2(fds[1], STDOUT_FILENO);
+        close(fds[1]);
+        execl("/system/bin/getprop", "getprop", name, (char *)NULL);
+        _exit(1);
+    }
+    close(fds[1]);
+    char buf[64];
+    ssize_t n = read(fds[0], buf, sizeof(buf) - 1);
+    close(fds[0]);
+    int status;
+    waitpid(pid, &status, 0);
+    if(n > 0)
+    {
+        buf[n] = 0;
+        buf[strcspn(buf, "\r\n")] = 0;
+        printf("usb:   %s = '%s'\n", name, buf);
+    }
+    else
+        printf("usb:   %s = (could not read)\n", name);
+}
+
 /* init does the work asynchronously, so wait for the mount table to show it */
 static bool wait_for_contents(bool want_mounted)
 {
@@ -268,6 +308,10 @@ int disk_unmount_all(void)
         resume_logging();
         printf("usb: init did not release %s (setprop %s)\n", PIVOT_ROOT,
             asked ? "ok" : "failed");
+        report_prop(NWZ_USB_CONFIG_PROP);
+        report_prop("sys.usb.config");
+        report_prop("sys.usb.state");
+        report_prop("sys.usb.msc1");
         fputs(contents_users, stdout);
         fflush(stdout);
 #ifdef HAVE_MULTIDRIVE
