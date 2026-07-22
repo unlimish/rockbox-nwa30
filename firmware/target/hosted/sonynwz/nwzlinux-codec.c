@@ -28,6 +28,7 @@
 #include "audiohw.h"
 #include "nwzlinux_codec.h"
 #include "stdlib.h"
+#include "fixedpoint.h"
 #include "panic.h"
 #include <sys/ioctl.h>
 #include "nwz_audio.h"
@@ -540,6 +541,28 @@ void audiohw_preinit(void)
     printf("Codec: %s\n", nwz_get_codec_name());
 }
 
+/* fp_factor() turns decibels into an amplitude ratio; this goes back the
+ * other way, so we can tell how much attenuation the hardware actually
+ * placed and leave the remainder to the digital volume. A search rather than
+ * a logarithm: it runs only when the user moves the volume, and it saves
+ * pulling in a log function for the sake of a dozen values. */
+static int factor_to_tenth_db(long factor)
+{
+    int lo = -1000, hi = 40, best = -1000;
+    while(lo <= hi)
+    {
+        int mid = (lo + hi) / 2;
+        if(fp_factor(fp_div(mid, 10, 16), 16) <= factor)
+        {
+            best = mid;
+            lo = mid + 1;
+        }
+        else
+            hi = mid - 1;
+    }
+    return best;
+}
+
 /* The codec's own volume control. Not "Master Volume", which is the SoC
  * mixer's and sits before it. */
 #define NWA30_VOLUME_CTL "master volume"
@@ -635,19 +658,31 @@ void audiohw_set_volume(int vol_l, int vol_r)
         }
         else
         {
-            /* no dB information: spread our range evenly over the steps */
-            int v = vol;
-            if(v < NWA30_VOL_MIN)
-                v = NWA30_VOL_MIN;
-            if(v > NWA30_VOL_MAX)
-                v = NWA30_VOL_MAX;
+            /* No dB information. Sony's drivers take a percentage - the older
+             * players' code says as much - so the control is linear in
+             * amplitude, not in decibels. Spreading our range evenly over the
+             * steps therefore put nearly the whole audible range into the
+             * first few of them: a touch above minimum was already loud.
+             * Convert properly instead: the step is the amplitude ratio the
+             * requested attenuation works out to. */
+            long factor = fp_factor(fp_div(vol, 10, 16), 16); /* 1<<16 = 0dB */
             long span = hw_max - hw_min;
-            step = hw_min + ((long)(v - NWA30_VOL_MIN) * span +
-                             (NWA30_VOL_MAX - NWA30_VOL_MIN) / 2) /
-                            (NWA30_VOL_MAX - NWA30_VOL_MIN);
-            /* we cannot say what the hardware actually placed, so do not ask
-             * the digital volume to make up a difference we cannot measure */
-            placed_tenth_db = vol;
+            if(factor >= (1 << 16))
+                step = hw_max;
+            else
+            {
+                /* round up, so the hardware never attenuates past what was
+                 * asked for and the digital volume only ever has to take a
+                 * little more off, not put any back */
+                step = hw_min + ((span * factor + (1 << 16) - 1) >> 16);
+            }
+            /* Below roughly -40dB there is no step left to land on, and the
+             * steps are coarse well before that, so hand the difference to
+             * the digital volume. It costs bits, but only where there is
+             * headroom to spare - at these levels the signal is far above the
+             * noise floor anyway. */
+            placed_tenth_db = factor_to_tenth_db(
+                span ? fp_div(step - hw_min, span, 16) : (1 << 16));
         }
         long lstep = step;
         alsa_controls_set_ints(NWA30_VOLUME_CTL, 1, &lstep);
