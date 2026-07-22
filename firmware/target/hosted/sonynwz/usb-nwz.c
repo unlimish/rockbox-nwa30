@@ -62,6 +62,15 @@
  * platform, so power_input_status() cannot answer this - ask the kernel's
  * power supply class, which the stock firmware uses for the same purpose. */
 #define NWZ_USB_ONLINE   "/sys/class/power_supply/usb/online"
+/* LUN 0's backing store. init.usbcfg.rc chowns this one to "system", which is
+ * the uid we run as, so it is ours to write even though the mount is not. */
+#define NWZ_MSC_LUN_FILE \
+    "/sys/devices/virtual/android_usb/android0/f_mass_storage/lun/file"
+/* what init.rc puts in sys.usb.msc1: the user partition */
+#define NWZ_MSC_BACKING  "/emmc@contents"
+/* the services init.rc defines for taking the partition away and back */
+#define NWZ_SVC_UNMOUNT  "unmount_msc1"
+#define NWZ_SVC_MOUNT    "mount_msc1"
 /* the property init watches, and the two values it switches on */
 #define NWZ_USB_CONFIG_PROP "sys.sony.config"
 #define NWZ_USB_CONFIG_MSC  "msc"
@@ -196,39 +205,17 @@ static bool contents_mounted(void)
     return found;
 }
 
-/* Ask init to switch the USB configuration. Returns false if we could not
- * even run setprop. */
-static bool set_usb_config(const char *value)
-{
-    pid_t pid = fork();
-    if(pid < 0)
-        return false;
-    if(pid == 0)
-    {
-        execl("/system/bin/setprop", "setprop", NWZ_USB_CONFIG_PROP, value,
-              (char *)NULL);
-        _exit(1);
-    }
-    int status;
-    waitpid(pid, &status, 0);
-    return status == 0;
-}
-
-/* Read a property back, so a setprop that returned success but changed
- * nothing can be told from one that took. init only runs its actions when the
- * value actually changes, so this is the difference between "init ignored us"
- * and "we never asked". */
-static void report_prop(const char *name)
+static bool read_prop(const char *name, char *out, size_t size)
 {
     int fds[2];
     if(pipe(fds) < 0)
-        return;
+        return false;
     pid_t pid = fork();
     if(pid < 0)
     {
         close(fds[0]);
         close(fds[1]);
-        return;
+        return false;
     }
     if(pid == 0)
     {
@@ -239,20 +226,74 @@ static void report_prop(const char *name)
         _exit(1);
     }
     close(fds[1]);
-    char buf[64];
-    ssize_t n = read(fds[0], buf, sizeof(buf) - 1);
+    ssize_t n = read(fds[0], out, size - 1);
     close(fds[0]);
     int status;
     waitpid(pid, &status, 0);
-    if(n > 0)
-    {
-        buf[n] = 0;
-        buf[strcspn(buf, "\r\n")] = 0;
+    if(n <= 0)
+        return false;
+    out[n] = 0;
+    out[strcspn(out, "\r\n")] = 0;
+    return true;
+}
+
+static void report_prop(const char *name)
+{
+    char buf[64];
+    if(read_prop(name, buf, sizeof(buf)))
         printf("usb:   %s = '%s'\n", name, buf);
-    }
     else
         printf("usb:   %s = (could not read)\n", name);
 }
+
+static bool set_prop(const char *name, const char *value)
+{
+    pid_t pid = fork();
+    if(pid < 0)
+        return false;
+    if(pid == 0)
+    {
+        execl("/system/bin/setprop", "setprop", name, value, (char *)NULL);
+        _exit(1);
+    }
+    int status;
+    waitpid(pid, &status, 0);
+    return status == 0;
+}
+
+/* Ask init to take the partition away, or give it back.
+ *
+ * Setting sys.sony.config is how the stock framework does it, but the write is
+ * refused for us - setprop reports success and the property reads back
+ * unchanged, which is what a denied property write looks like from here. init
+ * only acts on a change, so nothing happened.
+ *
+ * Starting the service directly does not need that property: init.rc already
+ * defines unmount_msc1 and mount_msc1, and ctl.start is the ordinary way to
+ * ask for one. What that leaves us to do ourselves is the part the property
+ * would also have done - pointing the gadget at the partition - and that we
+ * can do, because init.usbcfg.rc hands us the LUN file.
+ *
+ * Try the property first anyway: if it ever does work, the stock path does
+ * everything in the right order. */
+static bool ask_init(const char *config_value, const char *service)
+{
+    set_prop(NWZ_USB_CONFIG_PROP, config_value);
+
+    char now[64];
+    if(read_prop(NWZ_USB_CONFIG_PROP, now, sizeof(now)) &&
+       strcmp(now, config_value) == 0)
+        return true; /* the property took; init is doing all of it */
+
+    printf("usb: %s stayed '%s', starting %s instead\n", NWZ_USB_CONFIG_PROP,
+        now, service);
+    return set_prop("ctl.start", service);
+}
+
+/* Read a property back, so a setprop that returned success but changed
+ * nothing can be told from one that took. init only runs its actions when the
+ * value actually changes, so this is the difference between "init ignored us"
+ * and "we never asked". */
 
 /* init does the work asynchronously, so wait for the mount table to show it */
 static bool wait_for_contents(bool want_mounted)
@@ -295,11 +336,20 @@ int disk_unmount_all(void)
 #endif
     /* the current directory alone would keep the mount busy for init */
     chdir("/");
-    stop_logging();
     release_contents_files();
 
-    bool asked = set_usb_config(NWZ_USB_CONFIG_MSC);
+    bool asked = ask_init(NWZ_USB_CONFIG_MSC, NWZ_SVC_UNMOUNT);
+    /* only now let go of the log: init cannot unmount while we hold it open,
+     * but everything above needs to be able to say what it found */
+    stop_logging();
     bool released = asked && wait_for_contents(false);
+    if(released)
+    {
+        /* If init only unmounted for us, the gadget is still pointing at
+         * nothing - which is the empty drive the host has been showing. */
+        if(!sysfs_set_string(NWZ_MSC_LUN_FILE, NWZ_MSC_BACKING))
+            printf("usb: cannot hand %s to the gadget\n", NWZ_MSC_BACKING);
+    }
 
     if(!released)
     {
@@ -326,7 +376,9 @@ int disk_unmount_all(void)
  * number of successful mounts. */
 int disk_mount_all(void)
 {
-    bool asked = set_usb_config(NWZ_USB_CONFIG_ADB);
+    /* let go of the partition before asking for it back */
+    sysfs_set_string(NWZ_MSC_LUN_FILE, "");
+    bool asked = ask_init(NWZ_USB_CONFIG_ADB, NWZ_SVC_MOUNT);
     bool back = asked && wait_for_contents(true);
 
     resume_logging();
