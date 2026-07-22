@@ -240,6 +240,9 @@ static bool rockbox_is_running(void)
     return found;
 }
 
+/* defined below, next to main() where the log is first opened */
+int open_log(void);
+
 static bool boot_rockbox(void)
 {
     static const char *argv0 = ROCKBOX_ARGV0;
@@ -281,12 +284,14 @@ static bool boot_rockbox(void)
         }
         if(pid > 0)
         {
-            /* Let go of the log while we wait. It lives on /contents, and an
-             * open file descriptor there is enough to keep the partition
-             * mounted - which stops Rockbox handing it to a USB host, since
-             * the umount init does on its behalf then fails with EBUSY.
-             * Nothing is printed here anyway: we are about to block. */
-            int saved_out = dup(fileno(stdout));
+            /* Let go of the log while we wait. It lives on /contents, and a
+             * single open file descriptor there is enough to keep the
+             * partition busy - which stops Rockbox handing it to a USB host,
+             * because the umount init does on its behalf fails with EBUSY.
+             * Note we must not keep a copy to restore from: dup() would go on
+             * holding the file, which is exactly what we are trying to avoid.
+             * Reopen it afterwards instead. Nothing is printed in between: we
+             * are about to block. */
             int devnull = open("/dev/null", O_WRONLY);
             if(devnull >= 0)
             {
@@ -301,11 +306,12 @@ static bool boot_rockbox(void)
              * whatever replaces us will see it and stand aside. */
             int status;
             waitpid(pid, &status, 0);
-            if(saved_out >= 0)
+            int log = open_log();
+            if(log >= 0)
             {
-                dup2(saved_out, fileno(stdout));
-                dup2(saved_out, fileno(stderr));
-                close(saved_out);
+                dup2(log, fileno(stdout));
+                dup2(log, fileno(stderr));
+                close(log);
             }
             printf("rockbox exited (status %d)\n", status);
             return true;
