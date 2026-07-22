@@ -29,30 +29,23 @@
 #include <errno.h>
 #include <string.h>
 
-/* /contents (FAT/exFAT) rejects PROT_EXEC mmap, so dlopen() on a codec
- * loaded straight from there fails with EPERM. Staging the file into
- * tmpfs *at runtime*, from inside the running rockbox.sony process, does
- * not work either: a probe confirmed the process can create directories
- * under /tmp/rockbox but not new files, even directly in STAGE_DIR where
- * the bootloader itself wrote rockbox.sony and the .so libs moments
- * earlier (ENOENT on open(O_CREAT), despite mkdir()+stat() agreeing the
- * parent directory exists) - a permission model tied to which process
- * created the file, not a filesystem-state issue. An explicit dlopen() of
- * an already-staged file (libasound.so.2) worked fine, so it is file
- * *creation* that is being denied here, not dynamic loading in general.
- *
- * So the bootloader stages the codecs into tmpfs up front, the same way
- * it already does for rockbox.sony and its libraries - see
- * copy_dir_flat(ROCKBOX_CODECS_DIR, STAGE_CODECS_DIR) in
- * bootloader/nwz_linux.c. This just looks up that pre-staged copy. */
+/* Codecs are loaded from a copy the bootloader put in tmpfs, not from
+ * /contents. That partition rejects PROT_EXEC mmap, so dlopen() straight off
+ * it fails with EPERM - and the running rockbox.sony cannot stage the file
+ * itself either: it may create directories under /tmp/rockbox but not files,
+ * even in the very directory the bootloader wrote rockbox.sony into moments
+ * earlier (open(O_CREAT) gives ENOENT while mkdir() and stat() agree the parent
+ * exists). dlopen() of an already-staged library works, so what is denied is
+ * file creation rather than dynamic loading. See copy_dir_flat() in
+ * bootloader/nwz_linux.c for the other half of this. */
 #define NWA30_STAGED_CODECS_DIR "/tmp/rockbox/codecs"
 
 static const char *nwa30_staged_path(const char *fpath)
 {
     static char staged[MAX_PATH];
-    const char *base = strrchr(fpath, '/');
-    base = base ? base + 1 : fpath;
-    snprintf(staged, sizeof(staged), "%s/%s", NWA30_STAGED_CODECS_DIR, base);
+    const char *name = strrchr(fpath, '/');
+    name = name ? name + 1 : fpath;
+    snprintf(staged, sizeof(staged), "%s/%s", NWA30_STAGED_CODECS_DIR, name);
     if (access(staged, R_OK) == 0)
         return staged;
     printf("nwa30_staged_path: %s not staged (%s), falling back to %s\n",
@@ -79,9 +72,8 @@ void *lc_open(const char *filename, unsigned char *buf, size_t buf_size)
         DEBUGF("failed to load %s\n", filename);
         DEBUGF("lc_open(%s): %s\n", filename, dlerror());
 #ifdef SONY_NWA30
-        /* DEBUGF is compiled out in release builds, which is why this
-         * failure was invisible: codecs would silently fail to load and
-         * playback would just skip the track. Say why dlopen rejected it. */
+        /* DEBUGF is compiled out of release builds, which made this invisible:
+         * a codec would fail to load and playback would just skip the track. */
         printf("lc_open(%s): %s\n", fpath, dlerror());
         fflush(stdout);
 #endif

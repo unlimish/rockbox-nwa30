@@ -17,6 +17,7 @@
  * KIND, either express or implied.
  *
  ****************************************************************************/
+#include "system.h"
 #include "alsa-controls.h"
 #include "panic.h"
 #include "debug.h"
@@ -29,7 +30,7 @@ static snd_ctl_t *alsa_ctl;
 static snd_ctl_elem_list_t *alsa_ctl_list;
 static unsigned alsa_ctl_count;
 /* for each control, we store some info to avoid constantly using ALSA's horrible lookup functions */
-static struct ctl_t
+struct ctl_t
 {
     snd_ctl_elem_id_t *id; /* ID associated with the control */
     const char *name; /* name of the control */
@@ -38,7 +39,9 @@ static struct ctl_t
     unsigned items; /* number of items (for enums) */
     const char **enum_name; /* names of the enum, indexed by ALSA index */
     long min, max; /* range (for integers) */
-} *alsa_ctl_info;
+};
+
+static struct ctl_t *alsa_ctl_info;
 
 /* also used by alsa_controls_dump(), so not limited to debug builds */
 static const char *alsa_ctl_type_name(snd_ctl_elem_type_t type)
@@ -147,56 +150,65 @@ int alsa_controls_find(const char *name)
     return -1;
 }
 
-/* Print every control, with its type and (for enumerations) its items. The
- * same information is written with DEBUGF at init time, but that only reaches
- * a debug build: this is for bringing up a player whose mixer is not
- * documented, where it has to end up in the ordinary log. */
+static bool alsa_ctl_has_value(snd_ctl_elem_type_t type)
+{
+    return type == SND_CTL_ELEM_TYPE_INTEGER ||
+           type == SND_CTL_ELEM_TYPE_BOOLEAN ||
+           type == SND_CTL_ELEM_TYPE_ENUMERATED;
+}
+
+static void dump_control_items(const struct ctl_t *ctl)
+{
+    printf("  items:");
+    for(unsigned i = 0; i < ctl->items; i++)
+        printf("%s '%s'", i == 0 ? "" : ",", ctl->enum_name[i]);
+    printf("\n");
+}
+
+/* What the previous owner left behind. Taken before we touch anything, this is
+ * how the stock firmware's settings can be read off the hardware. */
+static void dump_control_value(const struct ctl_t *ctl)
+{
+    /* asking for fewer values than a control holds is fatal, so skip anything
+     * wider than the buffer rather than truncate the request */
+    long vals[8];
+    if(ctl->count == 0 || ctl->count > ARRAYLEN(vals))
+    {
+        printf("  value: (%u values, not read)\n", ctl->count);
+        return;
+    }
+    alsa_controls_get(ctl->name, ctl->type, ctl->count, vals);
+    printf("  value:");
+    for(unsigned i = 0; i < ctl->count; i++)
+    {
+        if(ctl->type == SND_CTL_ELEM_TYPE_ENUMERATED &&
+           vals[i] >= 0 && vals[i] < (long)ctl->items)
+            printf(" '%s'", ctl->enum_name[vals[i]]);
+        else
+            printf(" %ld", vals[i]);
+    }
+    printf("\n");
+}
+
+/* Every control with its type, items, range and current value. The same goes
+ * out through DEBUGF at init time, but that only reaches a debug build, and
+ * bringing up a player whose mixer is undocumented needs it in the plain log.
+ * The range matters as much as the name for a volume control, and neither can
+ * be guessed. */
 void alsa_controls_dump(void)
 {
     printf("ALSA controls:\n");
     for(unsigned i = 0; i < alsa_ctl_count; i++)
     {
-        printf("- name='%s', type=%s, count=%u\n", alsa_ctl_info[i].name,
-            alsa_ctl_type_name(alsa_ctl_info[i].type), alsa_ctl_info[i].count);
-        if(alsa_ctl_info[i].type == SND_CTL_ELEM_TYPE_ENUMERATED)
-        {
-            printf("  items:");
-            for(unsigned j = 0; j < alsa_ctl_info[i].items; j++)
-                printf("%s '%s'", j == 0 ? "" : ",", alsa_ctl_info[i].enum_name[j]);
-            printf("\n");
-        }
-        /* the range matters as much as the name for a volume control, and
-         * there is no way to guess it */
-        if(alsa_ctl_info[i].type == SND_CTL_ELEM_TYPE_INTEGER)
-            printf("  range: %ld..%ld\n", alsa_ctl_info[i].min, alsa_ctl_info[i].max);
-        /* And the value the previous owner left behind: dumped before we
-         * touch anything, this is how the original firmware's settings can be
-         * read off the hardware and compared with ours. */
-        if(alsa_ctl_info[i].type == SND_CTL_ELEM_TYPE_INTEGER ||
-           alsa_ctl_info[i].type == SND_CTL_ELEM_TYPE_BOOLEAN ||
-           alsa_ctl_info[i].type == SND_CTL_ELEM_TYPE_ENUMERATED)
-        {
-            /* Asking for fewer values than the control holds is fatal, so
-             * skip anything wider than the buffer rather than truncate. */
-            long vals[8];
-            unsigned n = alsa_ctl_info[i].count;
-            if(n == 0 || n > sizeof(vals) / sizeof(vals[0]))
-            {
-                printf("  value: (%u values, not read)\n", n);
-                continue;
-            }
-            alsa_controls_get(alsa_ctl_info[i].name, alsa_ctl_info[i].type, n, vals);
-            printf("  value:");
-            for(unsigned j = 0; j < n; j++)
-            {
-                if(alsa_ctl_info[i].type == SND_CTL_ELEM_TYPE_ENUMERATED &&
-                   vals[j] >= 0 && vals[j] < (long)alsa_ctl_info[i].items)
-                    printf(" '%s'", alsa_ctl_info[i].enum_name[vals[j]]);
-                else
-                    printf(" %ld", vals[j]);
-            }
-            printf("\n");
-        }
+        const struct ctl_t *ctl = &alsa_ctl_info[i];
+        printf("- name='%s', type=%s, count=%u\n", ctl->name,
+            alsa_ctl_type_name(ctl->type), ctl->count);
+        if(ctl->type == SND_CTL_ELEM_TYPE_ENUMERATED)
+            dump_control_items(ctl);
+        if(ctl->type == SND_CTL_ELEM_TYPE_INTEGER)
+            printf("  range: %ld..%ld\n", ctl->min, ctl->max);
+        if(alsa_ctl_has_value(ctl->type))
+            dump_control_value(ctl);
     }
 }
 

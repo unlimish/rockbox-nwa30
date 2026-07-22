@@ -129,11 +129,40 @@ void pcm_alsa_set_capture_device(const char *device)
 }
 #endif
 
+#ifdef SONY_NWA30
+/* Guessing a replacement format has a long tail of wrong answers, so ask the
+ * device which ones it will actually take. */
+static void print_accepted_formats(snd_pcm_t *handle, snd_pcm_hw_params_t *params,
+                                   snd_pcm_format_t rejected)
+{
+    static const snd_pcm_format_t candidates[] = {
+        SND_PCM_FORMAT_S32_LE, SND_PCM_FORMAT_S32_BE,
+        SND_PCM_FORMAT_S24_LE, SND_PCM_FORMAT_S24_BE,
+        SND_PCM_FORMAT_S24_3LE, SND_PCM_FORMAT_S24_3BE,
+        SND_PCM_FORMAT_S16_LE, SND_PCM_FORMAT_S16_BE,
+        SND_PCM_FORMAT_U8, SND_PCM_FORMAT_FLOAT_LE,
+    };
+    printf("pcm: %s rejected; formats this device accepts:",
+        snd_pcm_format_name(rejected));
+    for (unsigned i = 0; i < ARRAYLEN(candidates); i++)
+        if (snd_pcm_hw_params_test_format(handle, params, candidates[i]) == 0)
+            printf(" %s", snd_pcm_format_name(candidates[i]));
+    printf("\n");
+    fflush(stdout);
+}
+/* which of the steps below failed, for the log at the end */
+#define HWPARAMS_STEP(name) (step = (name))
+#else
+#define HWPARAMS_STEP(name) do { } while(0)
+#endif
+
 static int set_hwparams(snd_pcm_t *handle, unsigned long sampr)
 {
     int err;
     unsigned int srate;
-    const char *step = "?"; (void)step; /* which step failed, for the A30 log */
+#ifdef SONY_NWA30
+    const char *step = "?";
+#endif
     snd_pcm_hw_params_t *params;
     snd_pcm_hw_params_malloc(&params);
 
@@ -156,7 +185,7 @@ static int set_hwparams(snd_pcm_t *handle, unsigned long sampr)
     }
 
     /* choose all parameters */
-    step = "any";
+    HWPARAMS_STEP("any");
     err = snd_pcm_hw_params_any(handle, params);
     if (err < 0)
     {
@@ -164,7 +193,7 @@ static int set_hwparams(snd_pcm_t *handle, unsigned long sampr)
         goto error;
     }
     /* set the interleaved read/write format */
-    step = "access";
+    HWPARAMS_STEP("access");
     err = snd_pcm_hw_params_set_access(handle, params, access_);
     if (err < 0)
     {
@@ -172,37 +201,18 @@ static int set_hwparams(snd_pcm_t *handle, unsigned long sampr)
         goto error;
     }
     /* set the sample format */
-    step = "format";
+    HWPARAMS_STEP("format");
     err = snd_pcm_hw_params_set_format(handle, params, format);
     if (err < 0)
     {
         logf("Sample format not available for playback: %s", snd_strerror(err));
 #ifdef SONY_NWA30
-        /* This is where the A30 rejects us, and guessing a replacement has
-         * a long tail of wrong answers - ask the device which formats it
-         * will actually take instead. */
-        {
-            static const snd_pcm_format_t candidates[] = {
-                SND_PCM_FORMAT_S32_LE, SND_PCM_FORMAT_S32_BE,
-                SND_PCM_FORMAT_S24_LE, SND_PCM_FORMAT_S24_BE,
-                SND_PCM_FORMAT_S24_3LE, SND_PCM_FORMAT_S24_3BE,
-                SND_PCM_FORMAT_S16_LE, SND_PCM_FORMAT_S16_BE,
-                SND_PCM_FORMAT_U8, SND_PCM_FORMAT_FLOAT_LE,
-            };
-            printf("pcm: %s rejected; formats this device accepts:",
-                snd_pcm_format_name(format));
-            for (unsigned i = 0; i < ARRAYLEN(candidates); i++)
-                if (snd_pcm_hw_params_test_format(handle, params,
-                                                  candidates[i]) == 0)
-                    printf(" %s", snd_pcm_format_name(candidates[i]));
-            printf("\n");
-            fflush(stdout);
-        }
+        print_accepted_formats(handle, params, format);
 #endif
         goto error;
     }
     /* set the count of channels */
-    step = "channels";
+    HWPARAMS_STEP("channels");
     err = snd_pcm_hw_params_set_channels(handle, params, channels);
     if (err < 0)
     {
@@ -211,7 +221,7 @@ static int set_hwparams(snd_pcm_t *handle, unsigned long sampr)
     }
     /* set the stream rate */
     srate = sampr;
-    step = "rate";
+    HWPARAMS_STEP("rate");
     err = snd_pcm_hw_params_set_rate_near(handle, params, &srate, 0);
     if (err < 0)
     {
@@ -221,14 +231,14 @@ static int set_hwparams(snd_pcm_t *handle, unsigned long sampr)
     real_sample_rate = srate;
     if (real_sample_rate != sampr)
     {
-        step = "rate-match";
+        HWPARAMS_STEP("rate-match");
         logf("Rate doesn't match (requested %luHz, get %dHz)", sampr, real_sample_rate);
         err = -EINVAL;
         goto error;
     }
 
     /* set the buffer size */
-    step = "buffer";
+    HWPARAMS_STEP("buffer");
     err = snd_pcm_hw_params_set_buffer_size_near(handle, params, &buffer_size);
     if (err < 0)
     {
@@ -237,7 +247,7 @@ static int set_hwparams(snd_pcm_t *handle, unsigned long sampr)
     }
 
     /* set the period size */
-    step = "period";
+    HWPARAMS_STEP("period");
     err = snd_pcm_hw_params_set_period_size_near (handle, params, &period_size, NULL);
     if (err < 0)
     {
@@ -249,7 +259,7 @@ static int set_hwparams(snd_pcm_t *handle, unsigned long sampr)
     frames = calloc(1, period_size * channels * sizeof(sample_t));
 
     /* write the parameters to device */
-    step = "commit";
+    HWPARAMS_STEP("commit");
     err = snd_pcm_hw_params(handle, params);
     if (err < 0)
     {

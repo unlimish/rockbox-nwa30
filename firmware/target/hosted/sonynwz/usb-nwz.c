@@ -18,31 +18,29 @@
 
 /* USB mass storage for the Hagoromo players (NW-A30 and later).
  *
- * Handing the user partition to the host means unmounting it first, and we
- * cannot do that ourselves: Rockbox runs as uid 100 (system), umount(2) needs
- * CAP_SYS_ADMIN, and it comes back EPERM - the same wall that stops us
- * rebooting or suspending. The stock firmware does not do it directly either.
- * It asks init, which is root, by setting a property:
+ * Handing the user partition to the host means unmounting it, and we cannot:
+ * Rockbox runs as uid 100 (system), umount(2) wants CAP_SYS_ADMIN and comes
+ * back EPERM - the same wall that stops us rebooting or suspending. Asking
+ * init to do it is not open to us either. It watches sys.sony.config and runs
+ * unmount_msc1 when that turns "msc", but neither the property nor ctl.start
+ * is writable from here; init.svc.unmount_msc1 reads back empty, proving init
+ * never ran the service for us.
  *
- *     on property:sys.sony.config=msc
- *         start unmount_msc1                       (umount /contents)
- *         write .../f_mass_storage/lun/file  $sys.usb.msc1   (= /emmc@contents)
- *         ... switch the gadget to mass_storage,adb
+ * The framework does the whole thing correctly on its own, provided the daemon
+ * that drives it is still running - which is a question for the spare list in
+ * system-nwz.c, not for this file. Driving the gadget ourselves anyway is what
+ * produced the long-standing symptom of a first cable that worked and a second
+ * that showed an empty drive: our writes left the framework's state machine out
+ * of step with itself.
  *
- *     on property:sys.sony.config=adb
- *         write .../f_mass_storage/lun/file  ""
- *         ... switch back
- *         start mount_msc1                         (mount /contents again)
- *
- * So do the same. The framework normally sets that property in response to the
- * cable, but the service that would is one of those Rockbox freezes to stop
- * the machine restarting under it - which is why the player has been turning
- * up as a pair of empty drives - so we set it ourselves and wait for init to
- * finish the job.
+ * So all this file does is stop using the disk and wait for it to go, then wait
+ * for it to come back. That is exactly what the bootloader menu does, where USB
+ * has always worked.
  */
 
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <string.h>
 #include <errno.h>
 #include <unistd.h>
@@ -62,20 +60,12 @@
  * platform, so power_input_status() cannot answer this - ask the kernel's
  * power supply class, which the stock firmware uses for the same purpose. */
 #define NWZ_USB_ONLINE   "/sys/class/power_supply/usb/online"
-/* LUN 0's backing store. init.usbcfg.rc chowns this one to "system", which is
- * the uid we run as, so it is ours to write even though the mount is not. */
-#define NWZ_MSC_LUN_FILE \
-    "/sys/devices/virtual/android_usb/android0/f_mass_storage/lun/file"
-/* what init.rc puts in sys.usb.msc1: the user partition */
-#define NWZ_MSC_BACKING  "/emmc@contents"
 /* the services init.rc defines for taking the partition away and back */
 #define NWZ_SVC_UNMOUNT  "unmount_msc1"
 #define NWZ_SVC_MOUNT    "mount_msc1"
-/* the property init watches, and the two values it switches on */
+/* the property init watches for the switch */
 #define NWZ_USB_CONFIG_PROP "sys.sony.config"
-#define NWZ_USB_CONFIG_MSC  "msc"
-#define NWZ_USB_CONFIG_ADB  "adb"
-/* how long to give init to unmount or remount before giving up */
+/* how long to wait for the partition to go or come back before giving up */
 #define NWZ_USB_TIMEOUT_TICKS (5 * HZ)
 
 #ifdef HAVE_MULTIDRIVE
@@ -112,16 +102,46 @@ static void resume_logging(void)
     setvbuf(stdout, NULL, _IOLBF, 0);
 }
 
-/* init unmounts on our behalf, so when that fails the reason is almost
- * always that something still has a file open there - and it need not be us:
- * the bootloader waits for Rockbox with its own log on the partition. Name
- * whoever it is rather than leave the next person guessing. */
+/* Resolve a /proc symlink into buf, NUL terminated. */
+static bool read_link(char *buf, size_t size, const char *fmt, ...)
+{
+    char path[PATH_MAX];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(path, sizeof(path), fmt, ap);
+    va_end(ap);
+    ssize_t n = readlink(path, buf, size - 1);
+    if(n <= 0)
+        return false;
+    buf[n] = 0;
+    return true;
+}
+
+static bool points_into_contents(const char *target)
+{
+    return strncmp(target, PIVOT_ROOT "/", sizeof(PIVOT_ROOT)) == 0;
+}
+
+/* When the partition does not go away the reason is almost always that
+ * something still has a file open there, and it need not be us: the bootloader
+ * waits for Rockbox with its own log on that partition. Name whoever it is
+ * rather than leave the next person guessing. */
 static char contents_users[2048];
+
+static void note_contents_user(const char *fmt, ...)
+{
+    size_t used = strlen(contents_users);
+    if(used >= sizeof(contents_users) - 1)
+        return;
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(contents_users + used, sizeof(contents_users) - used, fmt, ap);
+    va_end(ap);
+}
 
 static void collect_contents_users(void)
 {
     contents_users[0] = 0;
-    size_t used = 0;
     DIR *proc = opendir("/proc");
     if(proc == NULL)
         return;
@@ -130,24 +150,17 @@ static void collect_contents_users(void)
     {
         if(ent->d_name[0] < '1' || ent->d_name[0] > '9')
             continue;
-        /* A process's working directory and root hold a mount just as firmly
-         * as an open file, and neither shows up in /proc/<pid>/fd. */
-        for(unsigned k = 0; k < 2; k++)
+        /* a working directory and a root hold a mount just as firmly as an open
+         * file, and neither of them shows up in /proc/<pid>/fd */
+        static const char *dir_links[] = { "cwd", "root" };
+        for(unsigned i = 0; i < ARRAYLEN(dir_links); i++)
         {
-            const char *what = k ? "root" : "cwd";
-            char link[sizeof("/proc//root") + NAME_MAX];
             char target[256];
-            snprintf(link, sizeof(link), "/proc/%s/%s", ent->d_name, what);
-            ssize_t n = readlink(link, target, sizeof(target) - 1);
-            if(n <= 0)
-                continue;
-            target[n] = 0;
-            if(strncmp(target, PIVOT_ROOT, sizeof(PIVOT_ROOT) - 1) == 0 &&
-               used < sizeof(contents_users) - 1)
-                used += snprintf(contents_users + used,
-                                 sizeof(contents_users) - used,
-                                 "usb:   pid %s has %s = %s\n",
-                                 ent->d_name, what, target);
+            if(read_link(target, sizeof(target), "/proc/%s/%s", ent->d_name,
+                         dir_links[i]) &&
+               strncmp(target, PIVOT_ROOT, sizeof(PIVOT_ROOT) - 1) == 0)
+                note_contents_user("usb:   pid %s has %s = %s\n", ent->d_name,
+                    dir_links[i], target);
         }
         char fddir[sizeof("/proc//fd") + NAME_MAX];
         snprintf(fddir, sizeof(fddir), "/proc/%s/fd", ent->d_name);
@@ -157,34 +170,25 @@ static void collect_contents_users(void)
         struct dirent *fd;
         while((fd = readdir(fds)))
         {
-            char link[sizeof(fddir) + 1 + NAME_MAX];
             char target[256];
-            snprintf(link, sizeof(link), "%s/%s", fddir, fd->d_name);
-            ssize_t n = readlink(link, target, sizeof(target) - 1);
-            if(n <= 0)
-                continue;
-            target[n] = 0;
-            if(strncmp(target, PIVOT_ROOT "/", sizeof(PIVOT_ROOT)) == 0 &&
-               used < sizeof(contents_users) - 1)
-                used += snprintf(contents_users + used,
-                                 sizeof(contents_users) - used,
-                                 "usb:   pid %s still has %s open\n",
-                                 ent->d_name, target);
+            if(read_link(target, sizeof(target), "%s/%s", fddir, fd->d_name) &&
+               points_into_contents(target))
+                note_contents_user("usb:   pid %s still has %s open\n",
+                    ent->d_name, target);
         }
         closedir(fds);
     }
     closedir(proc);
 }
 
-/* Close everything of ours that still points at the partition, so init's
- * umount does not fail with EBUSY.
+/* Close everything of ours that still points at the partition, so the umount
+ * does not fail with EBUSY.
  *
- * The USB screen already calls font_disable_all() before acknowledging, but
- * the player still turned up with the font's glyph cache open, so do it again
- * here - it is idempotent, and this runs later, after every thread has said it
- * has finished with the disk. Anything left after that is a stray descriptor
- * nobody is using: by this point the threads have all acknowledged, so a file
- * still open is one that was cached rather than one being read. */
+ * The USB screen calls font_disable_all() before acknowledging, but the player
+ * still turned up with the font's glyph cache open, so do it again here: it is
+ * idempotent, and by this point every thread has said it has finished with the
+ * disk, which makes anything still open a cached descriptor rather than one
+ * being read. */
 static void release_contents_files(void)
 {
     font_disable_all();
@@ -195,14 +199,9 @@ static void release_contents_files(void)
     struct dirent *fd;
     while((fd = readdir(fds)))
     {
-        char link[sizeof("/proc/self/fd/") + NAME_MAX];
         char target[256];
-        snprintf(link, sizeof(link), "/proc/self/fd/%s", fd->d_name);
-        ssize_t n = readlink(link, target, sizeof(target) - 1);
-        if(n <= 0)
-            continue;
-        target[n] = 0;
-        if(strncmp(target, PIVOT_ROOT "/", sizeof(PIVOT_ROOT)) != 0)
+        if(!read_link(target, sizeof(target), "/proc/self/fd/%s", fd->d_name) ||
+           !points_into_contents(target))
             continue;
         int num = atoi(fd->d_name);
         if(num > STDERR_FILENO && num != dirfd(fds))
@@ -265,14 +264,7 @@ static void report_prop(const char *name)
         printf("usb:   %s = (could not read)\n", name);
 }
 
-
-
-/* Read a property back, so a setprop that returned success but changed
- * nothing can be told from one that took. init only runs its actions when the
- * value actually changes, so this is the difference between "init ignored us"
- * and "we never asked". */
-
-/* init does the work asynchronously, so wait for the mount table to show it */
+/* the switch happens asynchronously, so watch the mount table for it */
 static bool wait_for_contents(bool want_mounted)
 {
     long deadline = current_tick + NWZ_USB_TIMEOUT_TICKS;
@@ -311,20 +303,9 @@ int disk_unmount_all(void)
 #ifdef HAVE_MULTIDRIVE
     cleanup_rbhome();
 #endif
-    /* the current directory alone would keep the mount busy for init */
+    /* the current directory alone would be enough to keep the mount busy */
     chdir("/");
     release_contents_files();
-
-    /* Do not touch the property, the services or the gadget. Neither
-     * sys.sony.config nor ctl.start is ours to write - init.svc.unmount_msc1
-     * comes back empty, so init never ran it - and the framework does the
-     * whole thing correctly on its own once the daemon that drives it is left
-     * running (see the spare list in system-nwz.c). Reaching in anyway got the
-     * first cable working and the second showing an empty drive: our writes
-     * were leaving its state machine out of step with itself.
-     *
-     * So all we owe it is to stop using the disk and wait. That is exactly the
-     * position the bootloader menu is in, where this has always worked. */
     stop_logging();
     bool released = wait_for_contents(false);
 

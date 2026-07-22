@@ -53,13 +53,36 @@ int nwz_power_shutdown(void);
 void nwz_thaw_framework(void);
 #endif
 
+#ifdef SONY_NWA30
+#define SINGLE_INSTANCE_LOCK    "/tmp/rockbox.lock"
+#define USB_SPARE_LIST_FILE     "/contents/.rockbox/usb_spare.txt"
+#define BATTERY_SYSFS_DIR       "/sys/class/power_supply/battery"
+/* the framework core gives this thread to every one of its daemons, so it
+ * identifies the framework rather than any single service */
+#define HANG_CHECKER_THREAD     "fr_job"
+
+/* Read the first line of a file, without its newline. Most of what this port
+ * asks the kernel about is a single short line in /proc or /sys. */
+static bool read_first_line(const char *path, char *buf, size_t size)
+{
+    FILE *f = fopen(path, "re");
+    if(f == NULL)
+        return false;
+    bool ok = fgets(buf, size, f) != NULL;
+    fclose(f);
+    if(!ok)
+        return false;
+    buf[strcspn(buf, "\r\n")] = 0;
+    return true;
+}
+#endif
+
 void power_off(void)
 {
 #ifdef SONY_NWA30
-    /* On the icx players Rockbox runs alongside the OF and just exits back to
-     * it, but here exiting only drops back to our own bootloader, which starts
-     * Rockbox again - so the player never actually turns off. Really power it
-     * down. */
+    /* The icx players exit back to the stock firmware, but here exiting only
+     * reaches our own bootloader, which starts Rockbox again - so on this
+     * player leaving is not turning off. */
     nwz_power_shutdown();
 #endif
     exit(0);
@@ -108,21 +131,15 @@ static void print_kern_mod_list(void)
         printf("  %s\n", *p++);
 }
 
-/* Refuse to run twice.
- *
- * The application we replace gets killed every half minute or so and started
- * again, and Rockbox now outlives that by running in its own session - so the
- * copy that replaces us can find one already running and start a second. Two of
- * them fight over the framebuffer and the input devices, which looks like
- * everything at once misbehaving.
- *
- * Take a lock rather than look for another process by name: the lock is held by
- * the kernel for exactly as long as the process lives, so it cannot go stale,
- * and it does not care how the other copy was started. */
+/* The stock application is restarted every half minute or so, and Rockbox
+ * outlives that by running in its own session, so the copy started in our place
+ * can find one already running. Two of them fight over the framebuffer and the
+ * input devices. A lock beats looking for our own name in /proc: the kernel
+ * drops it exactly when the process dies, so it cannot go stale. */
 #if defined(SONY_NWA30) && !defined(BOOTLOADER)
 static void claim_single_instance(void)
 {
-    int fd = open("/tmp/rockbox.lock", O_RDWR | O_CREAT | O_CLOEXEC, 0666);
+    int fd = open(SINGLE_INSTANCE_LOCK, O_RDWR | O_CREAT | O_CLOEXEC, 0666);
     if(fd < 0)
         return; /* cannot tell - carry on rather than refuse to start */
     if(flock(fd, LOCK_EX | LOCK_NB) < 0)
@@ -131,45 +148,27 @@ static void claim_single_instance(void)
         fflush(stdout);
         exit(0);
     }
-    /* deliberately leaked: the lock must be held for our whole lifetime */
+    /* fd is deliberately leaked: the lock must outlast this function */
 }
 #endif
 
 #ifdef SONY_NWA30
-/* Why the player last started. The system reboots out from under us about half
- * a minute after we take over, and the kernel command line records the reason,
- * which says whether that is the watchdog or something else. */
+/* The kernel command line records why the machine last came up, which tells a
+ * watchdog timeout apart from an orderly restart. */
 static void print_boot_reason(void)
 {
-    FILE *f = fopen("/proc/cmdline", "re");
-    if(f == NULL)
-        return;
     char line[1024];
-    if(fgets(line, sizeof(line), f) != NULL)
+    if(!read_first_line("/proc/cmdline", line, sizeof(line)))
+        return;
+    const char *reason = strstr(line, "bootreason=");
+    if(reason != NULL)
     {
-        const char *p = strstr(line, "bootreason=");
-        if(p != NULL)
-        {
-            p += sizeof("bootreason=") - 1;
-            printf("Boot reason: %.*s\n", (int)strcspn(p, " \n"), p);
-        }
+        reason += sizeof("bootreason=") - 1;
+        printf("Boot reason: %.*s\n", (int)strcspn(reason, " "), reason);
     }
-    fclose(f);
 }
 
-/* Why the player restarted.
- *
- * It reboots about half a minute after we take over - the whole machine, not
- * just us: /proc/uptime starts from scratch each time. The stock init arms a 30
- * second watchdog (exec /bin/wdt_ctrl 30, which talks to /proc/wdk), but that
- * one is kicked by kernel threads rather than by the application, so it should
- * not fire just because we are the ones running.
- *
- * Rather than keep guessing, print what the machine itself records: the state
- * of the watchdog, and the tail of the previous boot's kernel log, which is
- * where a watchdog timeout, a panic or a deliberate restart would each say so
- * in their own words. */
-static void print_file(const char *path, const char *what, long tail_bytes)
+static void print_file_tail(const char *path, const char *what, long tail_bytes)
 {
     int fd = open(path, O_RDONLY | O_CLOEXEC);
     if(fd < 0)
@@ -191,20 +190,24 @@ static void print_file(const char *path, const char *what, long tail_bytes)
     close(fd);
 }
 
+/* A watchdog timeout, a panic and a deliberate restart each say so in their own
+ * words in the previous boot's log, which is the only account of a reboot that
+ * takes the machine down with us. */
 static void print_restart_evidence(void)
 {
-    print_file("/proc/wdk", "watchdog state", 0);
-    /* the previous boot's kernel log, under the two names it goes by */
-    print_file("/proc/last_kmsg", "previous kernel log", 2048);
-    print_file("/sys/fs/pstore/console-ramoops", "previous console", 2048);
+    print_file_tail("/proc/wdk", "watchdog state", 0);
+    /* the previous kernel log, under the two names it goes by here */
+    print_file_tail("/proc/last_kmsg", "previous kernel log", 2048);
+    print_file_tail("/sys/fs/pstore/console-ramoops", "previous console", 2048);
 }
 
+/* /contents is the user partition and /contents_ext the memory card. Both are
+ * matched with their trailing space, so that /contents_ext is not swallowed by
+ * the test for /contents - the card's absence is what a database missing half
+ * its music looks like from here. /contents being noexec is likewise what
+ * dlopen() failing on a codec looks like. */
 static void print_mount_info(void)
 {
-    /* dlopen() on a codec/plugin loaded from /contents fails with EPERM
-     * ("failed to map segment"); confirm whether that's a plain noexec
-     * mount (fixable by remounting) rather than something else (SELinux,
-     * a read-only overlay) that a remount would not help with. */
     FILE *f = fopen("/proc/mounts", "re");
     if(f == NULL)
         return;
@@ -212,10 +215,6 @@ static void print_mount_info(void)
     char line[512];
     while(fgets(line, sizeof(line), f))
     {
-        /* /contents_ext is the memory card. It has to be listed separately:
-         * matching " /contents " on purpose excludes it, which left the log
-         * silent about whether the card was mounted at all - exactly the
-         * question when the database comes back without it. */
         if(strstr(line, " /contents ") || strstr(line, " /contents_ext ") ||
            strstr(line, " /tmp "))
             fputs(line, stdout);
@@ -224,46 +223,32 @@ static void print_mount_info(void)
     fclose(f);
 }
 
-/* What the battery node actually offers. We report a percentage from
- * "capacity" and have never looked at the rest; whether "current_now" exists
- * decides whether power draw can be measured at all, which is the only honest
- * way to compare against the stock firmware. Printed once at startup. */
+/* We take a percentage from "capacity" and have never read the rest. Whether
+ * "current_now" is there decides whether power draw can be measured at all. */
 static void print_battery_nodes(void)
 {
-    static const char *path = "/sys/class/power_supply/battery";
-    DIR *d = opendir(path);
-    if(d == NULL)
+    DIR *dir = opendir(BATTERY_SYSFS_DIR);
+    if(dir == NULL)
     {
-        printf("battery: cannot open %s (%s)\n", path, strerror(errno));
+        printf("battery: cannot open %s (%s)\n", BATTERY_SYSFS_DIR,
+            strerror(errno));
         return;
     }
-    printf("--- %s ---\n", path);
-    struct dirent *e;
-    while((e = readdir(d)) != NULL)
+    printf("--- %s ---\n", BATTERY_SYSFS_DIR);
+    struct dirent *entry;
+    while((entry = readdir(dir)) != NULL)
     {
-        if(e->d_name[0] == '.')
+        if(entry->d_name[0] == '.')
             continue;
-        char file[PATH_MAX], value[64];
-        snprintf(file, sizeof(file), "%s/%s", path, e->d_name);
-        int fd = open(file, O_RDONLY);
-        if(fd < 0)
-        {
-            printf("  %-24s (unreadable: %s)\n", e->d_name, strerror(errno));
-            continue;
-        }
-        ssize_t n = read(fd, value, sizeof(value) - 1);
-        close(fd);
-        if(n < 0)
-            n = 0;
-        value[n] = 0;
-        /* values are one line each; keep the log to one line each too */
-        char *nl = strchr(value, '\n');
-        if(nl)
-            *nl = 0;
-        printf("  %-24s %s\n", e->d_name, value);
+        char path[PATH_MAX], value[64];
+        snprintf(path, sizeof(path), "%s/%s", BATTERY_SYSFS_DIR, entry->d_name);
+        if(read_first_line(path, value, sizeof(value)))
+            printf("  %-24s %s\n", entry->d_name, value);
+        else
+            printf("  %-24s (unreadable: %s)\n", entry->d_name, strerror(errno));
     }
     printf("--- end of battery ---\n");
-    closedir(d);
+    closedir(dir);
     fflush(stdout);
 }
 
@@ -273,10 +258,8 @@ void nwz_watchdog_pet(void)
 }
 #endif
 
-/* How long the machine has been up. We get restarted every half minute or so;
- * this says whether only our process is being restarted (uptime keeps rising
- * across restarts) or the whole player is rebooting (it goes back to zero),
- * which decides whether outliving the app we replaced can help at all. */
+/* Rising across a restart means only our process was replaced; back to zero
+ * means the whole player rebooted. */
 static void print_uptime(void)
 {
     FILE *f = fopen("/proc/uptime", "re");
@@ -288,9 +271,10 @@ static void print_uptime(void)
     fclose(f);
 }
 
-/* Walk /proc: for every process, call fn(pid, cmdline). We run in place of the
- * stock application while the rest of the stock userspace keeps running, so
- * this is how we find both what to log and what to stop. */
+/* We run in place of the stock application while the rest of the stock
+ * userspace keeps running, so this is how we find both what to log and what to
+ * stop. The command line buffer holds a whole hagodaemon invocation: truncating
+ * it once hid the very service names we meant to spare, and they got frozen. */
 static void for_each_process(void (*fn)(int pid, const char *cmdline))
 {
     DIR *proc = opendir("/proc");
@@ -299,28 +283,24 @@ static void for_each_process(void (*fn)(int pid, const char *cmdline))
     struct dirent *entry;
     while((entry = readdir(proc)))
     {
-        /* only numeric entries are processes */
         if(entry->d_name[0] < '1' || entry->d_name[0] > '9')
-            continue;
+            continue; /* only numeric entries are processes */
         char path[sizeof("/proc//cmdline") + sizeof(entry->d_name)];
         snprintf(path, sizeof(path), "/proc/%s/cmdline", entry->d_name);
         FILE *f = fopen(path, "re");
         if(f == NULL)
             continue;
-        /* big enough for the whole command line: a hagodaemon can carry a long
-         * list of service names, and truncating it hid the very services we
-         * meant to spare (USB, storage) so they got frozen anyway */
-        char cmd[512];
-        size_t n = fread(cmd, 1, sizeof(cmd) - 1, f);
+        char cmdline[512];
+        size_t n = fread(cmdline, 1, sizeof(cmdline) - 1, f);
         fclose(f);
         if(n == 0)
             continue; /* kernel thread, no cmdline */
         /* cmdline is NUL-separated argv, turn the separators into spaces */
         for(size_t i = 0; i < n; i++)
-            if(cmd[i] == 0)
-                cmd[i] = ' ';
-        cmd[n] = 0;
-        fn(atoi(entry->d_name), cmd);
+            if(cmdline[i] == 0)
+                cmdline[i] = ' ';
+        cmdline[n] = 0;
+        fn(atoi(entry->d_name), cmdline);
     }
     closedir(proc);
 }
@@ -336,42 +316,22 @@ static void print_proc_list(void)
     for_each_process(print_one_process);
 }
 
-/* Stop the application manager from restarting the player.
- *
- * The stock application reports to it over the Sony IPC framework once it is up
- * ("FireChangeLifeCycle"); we do not, so it times out waiting for the home
- * application to reach the foreground and has the machine restarted - which is
- * what the previous boot's kernel log shows, an orderly reboot run by a process
- * called "reboot" about half a minute in.
- *
- * Freeze it rather than kill it: killed, init would start it again and the same
- * countdown would begin; stopped, it stays in the process table and simply
- * never runs the timeout. This is a blunt instrument standing in for speaking
- * its protocol, and it does mean the stock application management is out of
- * action for as long as Rockbox is running.
- */
-#if !defined(BOOTLOADER)
-/* Find who runs the hang checker.
- *
- * The framework in libpstcore.so watches applications' main threads and, when
- * it decides one is stuck, restarts the machine:
+/* libpstcore.so watches every application's main thread and restarts the
+ * machine when it decides one is stuck:
  *
  *     Hang detected! pid=%s
  *     Application(pid=%s) main thread is freezed, reboot the system...
  *
- * The previous boot's kernel log names the thread that asks for the restart -
- * "fr_job" - but that library is loaded by every hagodaemon process, so the
- * name alone does not say which one. Look through each process's threads for
- * it, which does.
- */
-/* Everything we SIGSTOP, so it can be started again on the way out.
+ * The stock application reports in over the Sony IPC framework and we do not,
+ * so the countdown is always running against us. Freezing beats killing: init
+ * would start a killed daemon again and the same countdown would begin, while a
+ * stopped one stays in the process table and never reaches its timeout.
  *
- * A frozen framework outlives us: the bootloader we return to is a separate
- * process and does not know what we stopped, so the services that hand the
- * user partition to the USB gadget stay stopped and the player shows up as an
- * empty drive. That is exactly the state the user has to power-cycle out of in
- * order to copy a new build over, so make leaving Rockbox put the framework
- * back the way we found it. */
+ * Everything stopped goes on this list, because a frozen framework outlives us
+ * - the bootloader we return to is a separate process and knows nothing of what
+ * we stopped, so the services that hand the user partition to the USB gadget
+ * would stay stopped and the player would come up as an empty drive. */
+#if !defined(BOOTLOADER)
 #define MAX_FROZEN 64
 static int frozen_pids[MAX_FROZEN];
 static int nr_frozen;
@@ -402,109 +362,81 @@ void nwz_thaw_framework(void)
     nr_frozen = 0;
 }
 
-static void find_thread_owner(int pid, const char *cmdline, const char *thread,
-                              bool freeze)
+/* Answers on the first match. A process gets several threads by the same name,
+ * and reporting each of them used to record its pid over and over, enough to
+ * overflow the frozen table and leave real processes stopped for good. */
+static bool process_has_thread(int pid, const char *thread)
 {
     char dir[32];
     snprintf(dir, sizeof(dir), "/proc/%d/task", pid);
     DIR *task = opendir(dir);
     if(task == NULL)
-        return;
+        return false;
+    bool found = false;
     struct dirent *tid;
-    while((tid = readdir(task)))
+    while(!found && (tid = readdir(task)))
     {
         if(tid->d_name[0] < '1' || tid->d_name[0] > '9')
             continue;
-        char path[sizeof(dir) + 1 + NAME_MAX + sizeof("/comm")];
+        char path[sizeof(dir) + 1 + NAME_MAX + sizeof("/comm")], comm[32];
         snprintf(path, sizeof(path), "%s/%s/comm", dir, tid->d_name);
-        FILE *f = fopen(path, "re");
-        if(f == NULL)
-            continue;
-        char comm[32] = {0};
-        if(fgets(comm, sizeof(comm), f) != NULL)
-        {
-            comm[strcspn(comm, "\n")] = 0;
-            if(strcmp(comm, thread) == 0)
-            {
-                printf("thread '%s' belongs to pid %d: %s\n", thread, pid, cmdline);
-                if(freeze)
-                {
-                    printf("freezing it\n");
-                    freeze_process(pid);
-                }
-                /* One hit is enough: the framework gives a process several
-                 * threads by this name, and matching each of them again used
-                 * to record the same pid over and over - enough to overflow
-                 * the table and leave real processes stopped for good. */
-                fclose(f);
-                break;
-            }
-        }
-        fclose(f);
+        found = read_first_line(path, comm, sizeof(comm)) &&
+                strcmp(comm, thread) == 0;
     }
     closedir(task);
+    return found;
 }
 
-/* Extra service names to spare, one per line, read once from
- * /contents/.rockbox/usb_spare.txt. The list below is the one that works; this
- * file only exists so another candidate can be tried without a flash cycle. */
-static char spare_extra[512];
+/* Names read once from USB_SPARE_LIST_FILE, one per line, added to the built-in
+ * list below. It exists so another candidate can be tried without reflashing. */
+static char extra_spared_services[512];
 
-static void load_spare_list(void)
+static void load_extra_spared_services(void)
 {
     static bool loaded = false;
     if(loaded)
         return;
     loaded = true;
-    FILE *f = fopen("/contents/.rockbox/usb_spare.txt", "re");
+    FILE *f = fopen(USB_SPARE_LIST_FILE, "re");
     if(f == NULL)
         return;
-    size_t n = fread(spare_extra, 1, sizeof(spare_extra) - 1, f);
+    size_t n = fread(extra_spared_services, 1,
+                     sizeof(extra_spared_services) - 1, f);
     fclose(f);
-    spare_extra[n] = 0;
-    printf("usb: also sparing services from usb_spare.txt:\n%s\n", spare_extra);
+    extra_spared_services[n] = 0;
+    printf("usb: also sparing services from usb_spare.txt:\n%s\n",
+        extra_spared_services);
     fflush(stdout);
 }
 
-static bool named_in_list(const char *list, const char *cmdline)
+/* One name per line, '#' comments out a line, trailing blanks are ignored. */
+static bool listed_in(const char *list, const char *cmdline)
 {
-    const char *p = list;
-    while(*p)
+    for(const char *line = list; *line; )
     {
-        /* one name per line; ignore blanks and anything commented out */
-        const char *end = p + strcspn(p, "\r\n");
+        size_t len = strcspn(line, "\r\n");
         char name[64];
-        size_t len = end - p;
-        if(len > 0 && len < sizeof(name) && *p != '#')
+        while(len > 0 && (line[len - 1] == ' ' || line[len - 1] == '\t'))
+            len--;
+        if(len > 0 && len < sizeof(name) && *line != '#')
         {
-            memcpy(name, p, len);
+            memcpy(name, line, len);
             name[len] = 0;
-            /* trim trailing spaces so a stray one does not stop a match */
-            while(len > 0 && (name[len - 1] == ' ' || name[len - 1] == '\t'))
-                name[--len] = 0;
-            if(len > 0 && strstr(cmdline, name) != NULL)
+            if(strstr(cmdline, name) != NULL)
                 return true;
         }
-        p = end;
-        while(*p == '\r' || *p == '\n')
-            p++;
+        line += strcspn(line, "\r\n");
+        line += strspn(line, "\r\n");
     }
     return false;
 }
 
-/* Services we must leave running: without these the player stops appearing as
- * a USB drive, which is how it is loaded with music and how we get the log
- * back. Everything else in the framework can sit still while Rockbox runs.
- *
- * We cannot hand the partition to a host ourselves - writing sys.sony.config
- * is refused, and so is ctl.start, with init.svc.unmount_msc1 coming back
- * empty to prove init never ran it. Only the framework can do it. So the whole
- * chain that carries a cable insertion has to stay awake: WMPortService sees
- * the connector, EventRouter carries the event, FuncMgrServiceFw and
- * ConnMgrServiceFw decide what the player becomes, and the three Usb/Storage
- * services do it. Freezing any one of them left the player an empty drive.
- *
- * PathMgrServiceFw must NOT be added: sparing it makes the machine restart. */
+/* The whole chain that carries a cable insertion has to stay awake, because we
+ * cannot hand the partition to a host ourselves: sys.sony.config and ctl.start
+ * are both refused for uid system, and init.svc.unmount_msc1 reads back empty
+ * to prove init never ran it. Freezing any one of these left the player showing
+ * up as an empty drive. PathMgrServiceFw is deliberately absent - sparing that
+ * one makes the machine restart. */
 static bool service_is_needed(const char *cmdline)
 {
     static const char *needed[] =
@@ -517,26 +449,25 @@ static bool service_is_needed(const char *cmdline)
         "UsbHostConnectionService",  /* and the connection state it acts on */
         "StorageMgrServiceFw",       /* the storage behind the drive */
     };
-    for(unsigned i = 0; i < sizeof(needed) / sizeof(needed[0]); i++)
+    for(unsigned i = 0; i < ARRAYLEN(needed); i++)
         if(strstr(cmdline, needed[i]) != NULL)
             return true;
-    load_spare_list();
-    return named_in_list(spare_extra, cmdline);
+    load_extra_spared_services();
+    return listed_in(extra_spared_services, cmdline);
 }
 
-static void handle_hang_checker(int pid, const char *cmdline)
+static void freeze_hang_checker(int pid, const char *cmdline)
 {
-    /* "fr_job" turned out to be a worker thread the framework core gives every
-     * one of its daemons, so it identifies the framework rather than the one
-     * service that restarts us. Freezing all of them does stop the restarts,
-     * but it also took USB with it. Spare the services that USB needs until we
-     * know which daemon actually runs the hang check. */
     if(service_is_needed(cmdline))
     {
         printf("leaving alone: pid %d %s\n", pid, cmdline);
         return;
     }
-    find_thread_owner(pid, cmdline, "fr_job", true);
+    if(!process_has_thread(pid, HANG_CHECKER_THREAD))
+        return;
+    printf("thread '%s' belongs to pid %d: %s\nfreezing it\n",
+        HANG_CHECKER_THREAD, pid, cmdline);
+    freeze_process(pid);
 }
 #endif
 
@@ -551,11 +482,10 @@ static void freeze_app_manager(int pid, const char *cmdline)
 }
 #endif
 
+/* Nothing tells the stock boot splash that boot is over, so it keeps drawing
+ * over our screen. The stock application stops it too, just politely. */
 static void kill_boot_animation(int pid, const char *cmdline)
 {
-    /* The stock boot splash keeps drawing over our screen because nothing told
-     * it boot was done. It is just the animation, so end it the blunt way; the
-     * stock app stops it too. */
     if(strstr(cmdline, "icx_bootanimation") != NULL)
     {
         printf("stopping boot animation (pid %d)\n", pid);
@@ -655,17 +585,13 @@ static void nwz_sig_handler(int sig, siginfo_t *siginfo, void *context)
 void system_init(void)
 {
     int *s;
-    /* Our stdout is a file on the player, so it is block buffered by default:
-     * anything printed before an abrupt death (a signal we cannot handle, say)
-     * is lost with the buffer, which leaves the log showing only the unbuffered
-     * stderr output and makes it look as if we never got that far. Log lines as
-     * they are written instead - this log is how the port gets debugged. */
+    /* Our stdout is a file on the player and would be block buffered, losing
+     * everything still in the buffer when a signal we cannot handle kills us -
+     * which reads as if we never got that far. */
     setvbuf(stdout, NULL, _IOLBF, 0);
 #ifdef SONY_NWA30
-    /* Every debugging round on this device has cost a wasted flash/test
-     * cycle to a stale build, because nothing in the log said which
-     * commit's binary was actually running. Say it plainly, first thing,
-     * for both the bootloader and the main app. */
+    /* First line of every log: a stale build is indistinguishable from a broken
+     * one otherwise, and each mix-up costs a flash and test cycle. */
     printf("build: %s (%s)\n", rbversion,
 #if defined(BOOTLOADER)
         "bootloader"
@@ -692,14 +618,10 @@ void system_init(void)
     sigaction(SIGPIPE, &sa, NULL);
     sigaction(SIGBUS, &sa, NULL);
 #ifdef SONY_NWA30
-    /* On this player something in the stock userspace sends us SIGTERM a little
-     * while after we start, whether or not we are being used - the earlier logs
-     * showed "terminated by the system" followed by a restart. That kills the
-     * UI and, because the system restarts the app we replaced, loops. Ignore it
-     * so Rockbox stays up. If it turns out the system then escalates to SIGKILL
-     * we cannot catch that, but the next log will show whether this was enough.
-     * (This does mean we do not hand the player back on a SIGTERM meant to grab
-     * it for USB mode; revisit once we know where the signal comes from.) */
+    /* The stock userspace sends SIGTERM a little while after we start whether
+     * or not the player is in use, and honouring it loops: we quit, the system
+     * starts the application we replaced, and that is us again. We do not get
+     * to catch the SIGKILL if it escalates. */
     signal(SIGTERM, SIG_IGN);
 #else
     /* not a fault, but we want to leave cleanly rather than be killed
@@ -720,7 +642,7 @@ void system_init(void)
     for_each_process(kill_boot_animation);
 #if !defined(BOOTLOADER)
     for_each_process(freeze_app_manager);
-    for_each_process(handle_hang_checker);
+    for_each_process(freeze_hang_checker);
     /* Whatever we stopped has to be started again when we go, however we go:
      * we hand control back to the bootloader, and a framework left frozen
      * there cannot give the user partition to the USB gadget - the player

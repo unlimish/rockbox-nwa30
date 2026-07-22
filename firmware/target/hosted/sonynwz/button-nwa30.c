@@ -20,6 +20,7 @@
 #include <stdio.h>
 #include <linux/input.h>
 
+#include "system.h"
 #include "button.h"
 #include "button-target.h"
 
@@ -46,31 +47,7 @@
  * The touchscreen ("himax-hx8526-icx") reports BTN_TOUCH on its own device;
  * button-devinput.c reads every device and calls this to translate keycodes. */
 
-/* Report each keycode the player produces, once, so that pressing a button that
- * is not handled here still writes its code to /contents/rockbox.log. */
-static int button_map_nolog(int keycode);
-
-static void log_keycode_once(int keycode, int button)
-{
-    static int seen[16];
-    static unsigned nr_seen = 0;
-    for(unsigned i = 0; i < nr_seen; i++)
-        if(seen[i] == keycode)
-            return;
-    if(nr_seen < sizeof(seen) / sizeof(seen[0]))
-        seen[nr_seen++] = keycode;
-    printf("button: keycode %d (0x%x) -> %s (0x%x)\n", keycode, keycode,
-        button ? "mapped" : "IGNORED", button);
-}
-
-int button_map(int keycode)
-{
-    int button = button_map_nolog(keycode);
-    log_keycode_once(keycode, button);
-    return button;
-}
-
-static int button_map_nolog(int keycode)
+static int keycode_to_button(int keycode)
 {
     switch(keycode)
     {
@@ -102,6 +79,28 @@ static int button_map_nolog(int keycode)
             /* logged by button_map() */
             return 0;
     }
+}
+
+/* Each keycode the player produces is reported once, so that pressing a button
+ * this file does not handle still leaves its code in the log. */
+static void log_keycode_once(int keycode, int button)
+{
+    static int seen[16];
+    static unsigned nr_seen = 0;
+    for(unsigned i = 0; i < nr_seen; i++)
+        if(seen[i] == keycode)
+            return;
+    if(nr_seen < ARRAYLEN(seen))
+        seen[nr_seen++] = keycode;
+    printf("button: keycode %d (0x%x) -> %s (0x%x)\n", keycode, keycode,
+        button ? "mapped" : "IGNORED", button);
+}
+
+int button_map(int keycode)
+{
+    int button = keycode_to_button(keycode);
+    log_keycode_once(keycode, button);
+    return button;
 }
 
 /* button_hold() comes from button-devinput.c, which tracks BUTTON_HOLD_KEYCODE.

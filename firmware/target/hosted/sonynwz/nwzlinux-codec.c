@@ -338,127 +338,135 @@ void audiohw_enable_cuerev(bool en)
 }
 
 #ifdef SONY_NWA30
-/* Set a boolean control only if it exists. audiohw_preinit() (and hence this)
- * runs during boot, before any UI is shown, and alsa_controls_set_bool()
- * panics if the named control is missing. The A30 control names come from the
- * device kernel/OF but could not be re-checked at the ALSA layer during recon
- * (amixer was unavailable in the update environment), so a single wrong name
- * would otherwise turn into a boot-blocking panic. Skipping a missing control
- * at worst leaves audio muted, which is recoverable; it never changes
- * behaviour when the control is present. */
-static void nwa30_set_bool_if_present(const char *name, bool val)
+#define PCM_DEVICE_OVERRIDE_FILE  "/.rockbox/pcm_device.txt"
+#define CODEC_PROC_DIR            "/proc/icx_audio_cxd3778gf_data"
+
+/* alsa_controls_set_*() panics on a control that is missing or of another type,
+ * and audiohw_preinit() runs during boot with no UI to report from. The control
+ * names come from the device's own kernel but their types were never checked
+ * there, so one wrong name would be a boot-blocking panic. Skipping leaves at
+ * worst a muted player, which can be recovered from. */
+static bool nwa30_control_is(const char *name, snd_ctl_elem_type_t want,
+                             const char *what)
 {
     snd_ctl_elem_type_t type = alsa_controls_get_type(name);
-    if(type == SND_CTL_ELEM_TYPE_BOOLEAN)
-        alsa_controls_set_bool(name, val);
-    else if(type == SND_CTL_ELEM_TYPE_NONE)
+    if(type == want)
+        return true;
+    if(type == SND_CTL_ELEM_TYPE_NONE)
         printf("audio: mixer control '%s' not found, skipping\n", name);
     else
-        printf("audio: mixer control '%s' is type %d, not a switch, skipping\n",
-            name, type);
+        printf("audio: mixer control '%s' is type %d, not %s, skipping\n",
+            name, type, what);
+    return false;
 }
 
-/* The volume curve lives in the codec driver, not in us: Sony loads a
- * model-specific table and the "master volume" control is an index into it,
- * so the only way to drive the hardware volume correctly is to read the table
- * off the device. Print it once so the mapping can be built from real values
- * instead of guessed. */
-/* Let the PCM device be chosen without rebuilding.
- *
- * /proc/asound/pcm shows six devices, and only device 1 - the one we use - is
- * on the "STD" DAI; every other is "ICX", Sony's own. Their player is 10dB
- * louder at the same codec volume, so which of these it actually opens is
- * worth trying rather than arguing about, and each attempt otherwise costs a
- * reflash. Read the device from a file if one is there:
+static void nwa30_set_bool_if_present(const char *name, bool val)
+{
+    if(nwa30_control_is(name, SND_CTL_ELEM_TYPE_BOOLEAN, "a switch"))
+        alsa_controls_set_bool(name, val);
+}
+
+static void nwa30_set_enum_if_present(const char *name, const char *value)
+{
+    if(nwa30_control_is(name, SND_CTL_ELEM_TYPE_ENUMERATED, "an enum"))
+        alsa_controls_set_enum(name, value);
+}
+
+/* /proc/asound/pcm lists six devices and only device 1 is on the "STD" DAI;
+ * the rest are Sony's own "ICX". Their player is 10dB louder at the same codec
+ * volume, so which device it really opens is worth trying rather than arguing
+ * about - and each attempt would otherwise cost a reflash:
  *
  *     echo hw:0,4 > /contents/.rockbox/pcm_device.txt
  *
  * Delete the file to go back to the built-in default. */
 static void nwa30_apply_pcm_override(void)
 {
-    FILE *f = fopen("/.rockbox/pcm_device.txt", "re");
+    FILE *f = fopen(PCM_DEVICE_OVERRIDE_FILE, "re");
     if(f == NULL)
     {
         printf("audio: pcm device %s (no override file)\n",
             DEFAULT_PLAYBACK_DEVICE);
         return;
     }
-    static char dev[32];
-    if(fgets(dev, sizeof(dev), f) != NULL)
+    static char device[32];
+    if(fgets(device, sizeof(device), f) != NULL)
     {
-        dev[strcspn(dev, " \t\r\n")] = 0;
-        if(dev[0] != 0)
+        device[strcspn(device, " \t\r\n")] = 0;
+        if(device[0] != 0)
         {
-            pcm_alsa_set_playback_device(dev);
-            printf("audio: pcm device %s (from pcm_device.txt)\n", dev);
+            pcm_alsa_set_playback_device(device);
+            printf("audio: pcm device %s (from pcm_device.txt)\n", device);
         }
     }
     fclose(f);
 }
 
-/* List a directory, so a guess at a path can be replaced by what is there. */
 static void nwa30_list_dir(const char *path)
 {
-    DIR *d = opendir(path);
-    if(d == NULL)
+    DIR *dir = opendir(path);
+    if(dir == NULL)
     {
         printf("audio: cannot list %s\n", path);
         return;
     }
     printf("--- %s ---\n", path);
-    struct dirent *e;
-    while((e = readdir(d)))
-        if(e->d_name[0] != '.')
-            printf("  %s\n", e->d_name);
+    struct dirent *entry;
+    while((entry = readdir(dir)))
+        if(entry->d_name[0] != '.')
+            printf("  %s\n", entry->d_name);
     printf("--- end of %s ---\n", path);
-    closedir(d);
+    closedir(dir);
 }
 
-static void nwa30_dump_volume_table(void)
+static void nwa30_print_file(const char *path, int max_lines)
 {
-    /* Which PCM is which decides where the sound goes, and hw:0,1 was picked
-     * early from a guess; the stock HAL knows about hw:0,0 through hw:0,4.
-     * Print what the card actually offers. */
+    FILE *f = fopen(path, "re");
+    if(f == NULL)
+    {
+        printf("audio: no %s\n", path);
+        return;
+    }
+    printf("--- %s ---\n", path);
+    char line[256];
+    int lines = 0;
+    while(fgets(line, sizeof(line), f) != NULL && lines++ < max_lines)
+        fputs(line, stdout);
+    printf("--- end of %s (%d lines) ---\n", path, lines);
+    fclose(f);
+}
+
+/* The volume curve lives in the codec driver: Sony loads a model-specific table
+ * and "master volume" is an index into it, so the mapping has to be read off
+ * the device rather than guessed. Which PCM is which decides where the sound
+ * goes, and hw:0,1 was an early guess while the stock HAL knows hw:0,0 to
+ * hw:0,4. Print what the card actually offers. */
+static void nwa30_dump_audio_info(void)
+{
     static const char *paths[] =
     {
         "/proc/asound/pcm",
         "/proc/asound/cards",
-        "/proc/icx_audio_cxd3778gf_data",
-        "/proc/icx_audio_cxd3778gf_data/ovt",
-        "/proc/icx_audio_cxd3778gf_data/hvt",
+        CODEC_PROC_DIR,
+        CODEC_PROC_DIR "/ovt",
+        CODEC_PROC_DIR "/hvt",
     };
-    nwa30_list_dir("/proc/icx_audio_cxd3778gf_data");
-    nwa30_apply_pcm_override();
-    for(unsigned i = 0; i < sizeof(paths) / sizeof(paths[0]); i++)
-    {
-        FILE *f = fopen(paths[i], "re");
-        if(f == NULL)
-        {
-            printf("audio: no %s\n", paths[i]);
-            continue;
-        }
-        printf("--- %s ---\n", paths[i]);
-        char line[256];
-        int lines = 0;
-        while(fgets(line, sizeof(line), f) != NULL && lines++ < 200)
-            fputs(line, stdout);
-        printf("--- end of %s (%d lines) ---\n", paths[i], lines);
-        fclose(f);
-    }
+    nwa30_list_dir(CODEC_PROC_DIR);
+    for(unsigned i = 0; i < ARRAYLEN(paths); i++)
+        nwa30_print_file(paths[i], 200);
     fflush(stdout);
 }
 
-/* Same idea for an enumeration, e.g. "output device" -> "headphone". */
-static void nwa30_set_enum_if_present(const char *name, const char *value)
+/* Where the stock firmware leaves the output gain, which is its maximum and
+ * where the loudness ceiling comes from. An earlier build drove this to zero
+ * for "low power" and left players silent, so set it rather than trust it. */
+static void nwa30_restore_output_gain(void)
 {
-    snd_ctl_elem_type_t type = alsa_controls_get_type(name);
-    if(type == SND_CTL_ELEM_TYPE_ENUMERATED)
-        alsa_controls_set_enum(name, value);
-    else if(type == SND_CTL_ELEM_TYPE_NONE)
-        printf("audio: mixer control '%s' not found, skipping\n", name);
-    else
-        printf("audio: mixer control '%s' is type %d, not an enum, skipping\n",
-            name, type);
+    long lo, hi;
+    if(!alsa_controls_get_range("master gain", &lo, &hi))
+        return;
+    alsa_controls_set_ints("master gain", 1, &hi);
+    printf("audio: 'master gain' set to %ld (max of %ld..%ld)\n", hi, lo, hi);
 }
 #endif
 
@@ -511,48 +519,25 @@ void audiohw_preinit(void)
     alsa_controls_init("default");
 #endif
 #ifdef SONY_NWA30
-    /* The Hagoromo platform (CXD3778GF) has its own set of controls; the names
-     * used here were all confirmed to exist in the device's own kernel.
-     * Note that "playback mute" is the digital (PCM) path, which is the one we
-     * care about: "analog playback mute" belongs to the analog input used for
-     * the tuner and is handled in audiohw_set_playback_src(). */
-    /* List what this codec actually offers. The names were read out of the
-     * device kernel, but not their types, and setting a control with the wrong
-     * type is fatal - so put the real list in the log to work from. */
+    /* The names were read out of the device's kernel but not their types, so
+     * put the real list in the log to work from. */
     alsa_controls_dump();
-    nwa30_dump_volume_table();
-    /* Put the output gain back where the stock firmware leaves it. This is
-     * its maximum, and it is where the loudness ceiling comes from; an
-     * earlier build drove it to zero for "low power" and left players
-     * silent, so restore it rather than trusting whatever is there. */
-    {
-        long lo, hi;
-        if(alsa_controls_get_range("master gain", &lo, &hi))
-        {
-            long want = hi;
-            alsa_controls_set_ints("master gain", 1, &want);
-            printf("audio: 'master gain' set to %ld (max of %ld..%ld)\n",
-                want, lo, hi);
-        }
-    }
-    /* Unmute the whole playback path. The stock audio HAL
-     * (libaudiohal-adleralsa.so) clears several mutes to start playback, and we
-     * had only cleared one of them - "headphone mute" in particular was left on,
-     * so even with the output routed to the jack nothing came through. Clear
-     * every mute the device turns out to have on the digital/headphone path;
-     * whichever names are absent are simply skipped. Note we do NOT touch
-     * "analog playback mute", which belongs to the tuner and must stay muted for
-     * playback (see audiohw_set_playback_src). */
+    nwa30_dump_audio_info();
+    nwa30_apply_pcm_override();
+    nwa30_restore_output_gain();
+    /* The stock audio HAL clears several mutes to start playback and we had
+     * only cleared one; "headphone mute" in particular stayed on, so even with
+     * the output routed to the jack nothing came through. "analog playback
+     * mute" is deliberately left alone - it belongs to the tuner input and must
+     * stay muted for playback, see audiohw_set_playback_src(). */
     nwa30_set_bool_if_present("playback mute", false);
     nwa30_set_bool_if_present("digital playback mute", false);
     nwa30_set_bool_if_present("headphone mute", false);
     nwa30_set_bool_if_present("Master Switch", true);
-    /* Pick the amplifier's gain range *before* routing anything to it. The
-     * dump taken at this point shows it powers up on 'normal', and changing
-     * it later - which is what the "DAC power mode" setting did - made no
-     * audible difference at all, as though the amp had already latched the
-     * value when it came up. Set it while the output is still off so it takes
-     * effect; the setting can still switch it afterwards. */
+    /* Before routing anything to the amplifier, not after: it powers up on
+     * 'normal' and changing it later - which is what the "DAC power mode"
+     * setting did - made no audible difference, as though the value had been
+     * latched at power-up. The setting can still switch it afterwards. */
     nwa30_set_enum_if_present("headphone smaster se gain mode", "high");
     nwa30_set_enum_if_present("headphone smaster gain mode", "high");
     nwa30_set_enum_if_present("headphone smaster btl gain mode", "high");
@@ -636,11 +621,10 @@ void audiohw_preinit(void)
     printf("Codec: %s\n", nwz_get_codec_name());
 }
 
-/* fp_factor() turns decibels into an amplitude ratio; this goes back the
- * other way, so we can tell how much attenuation the hardware actually
- * placed and leave the remainder to the digital volume. A search rather than
- * a logarithm: it runs only when the user moves the volume, and it saves
- * pulling in a log function for the sake of a dozen values. */
+/* fp_factor() turns decibels into an amplitude ratio; this goes the other way,
+ * so we can tell how much attenuation the hardware really placed and leave the
+ * remainder to the digital volume. A search rather than a logarithm: it runs
+ * only when the volume moves, and saves pulling in a log function. */
 static int factor_to_tenth_db(long factor)
 {
     int lo = -1000, hi = 40, best = -1000;
@@ -670,6 +654,84 @@ void audiohw_postinit(void)
 {
 }
 
+#ifdef SONY_NWA30
+/* Everything audiohw_set_volume() needs to know about the hardware control,
+ * probed once. A dB scale is the accurate way to place the volume; without one
+ * we fall back to treating the control as linear in amplitude, which is what
+ * Sony's drivers do - the older players' code says as much. */
+static struct
+{
+    bool probed;
+    bool usable;
+    bool has_db;
+    long min, max;
+    long min_mdb, step_mdb;
+} hw_vol;
+
+static void probe_hw_volume(void)
+{
+    if(hw_vol.probed)
+        return;
+    hw_vol.probed = true;
+    hw_vol.usable = alsa_controls_get_range(NWA30_VOLUME_CTL, &hw_vol.min,
+                                            &hw_vol.max) &&
+                    hw_vol.max > hw_vol.min;
+    hw_vol.has_db = hw_vol.usable &&
+                    alsa_controls_get_db_range(NWA30_VOLUME_CTL,
+                                               &hw_vol.min_mdb,
+                                               &hw_vol.step_mdb) &&
+                    hw_vol.step_mdb > 0;
+    if(hw_vol.has_db)
+        printf("audio: '%s' %ld..%ld = %ld..%ld dB in %ld.%02ld dB steps\n",
+            NWA30_VOLUME_CTL, hw_vol.min, hw_vol.max, hw_vol.min_mdb / 100,
+            (hw_vol.min_mdb + (hw_vol.max - hw_vol.min) * hw_vol.step_mdb) / 100,
+            hw_vol.step_mdb / 100, hw_vol.step_mdb % 100);
+    else if(hw_vol.usable)
+        printf("audio: '%s' %ld..%ld, no dB scale published - mapping %d..%d dB onto it\n",
+            NWA30_VOLUME_CTL, hw_vol.min, hw_vol.max,
+            NWA30_VOL_MIN / 10, NWA30_VOL_MAX / 10);
+    else
+        printf("audio: no '%s' control, keeping volume in software\n",
+            NWA30_VOLUME_CTL);
+    fflush(stdout);
+}
+
+/* Pick the control step for a request in tenth-dB, and report what that step is
+ * actually worth so the caller can leave the remainder to the digital volume. */
+static long hw_volume_step(int vol, long *placed_tenth_db)
+{
+    long step;
+    if(hw_vol.has_db)
+    {
+        /* the request is in tenth-dB, the TLV in hundredths */
+        step = (vol * 10 - hw_vol.min_mdb + hw_vol.step_mdb / 2) /
+               hw_vol.step_mdb + hw_vol.min;
+        step = MAX(hw_vol.min, MIN(hw_vol.max, step));
+        *placed_tenth_db = (hw_vol.min_mdb +
+                            (step - hw_vol.min) * hw_vol.step_mdb) / 10;
+        return step;
+    }
+    /* Linear in amplitude, so spreading our dB range evenly over the steps put
+     * nearly the whole audible range into the first few of them - a touch above
+     * minimum was already loud. Convert to the amplitude ratio the requested
+     * attenuation works out to, rounding up so the hardware never attenuates
+     * past what was asked and the digital volume only ever takes a little more
+     * off rather than putting any back. */
+    long factor = fp_factor(fp_div(vol, 10, 16), 16); /* 1<<16 = 0dB */
+    long span = hw_vol.max - hw_vol.min;
+    if(factor >= (1 << 16))
+        step = hw_vol.max;
+    else
+        step = hw_vol.min + ((span * factor + (1 << 16) - 1) >> 16);
+    /* Below roughly -40dB no step is left to land on, and they are coarse well
+     * before that, so the difference goes to the digital volume. It costs bits
+     * only where there is headroom to spare. */
+    *placed_tenth_db = factor_to_tenth_db(
+        span ? fp_div(step - hw_vol.min, span, 16) : (1 << 16));
+    return step;
+}
+#endif /* SONY_NWA30 */
+
 #ifndef SONY_NWA30 /* the NW-A30 volume path is purely digital, see below */
 /* volume must be driver unit */
 static void nwz_set_driver_vol(int vol)
@@ -689,118 +751,36 @@ static void nwz_set_driver_vol(int vol)
 void audiohw_set_volume(int vol_l, int vol_r)
 {
 #ifdef SONY_NWA30
-    /* Prefer the codec's own volume. Attenuating in software throws away bits
-     * - at -43dB, which is where the digital range ends, only about a third of
-     * the 16 the DAC takes are left - whereas the hardware attenuates after
-     * the converter and keeps them all.
-     *
-     * The curve is not ours to reproduce: Sony loads a model-specific table
-     * into the codec, and the /proc entry that would expose it does not exist
-     * on this player. But ALSA publishes what each step is worth in dB as a
-     * TLV, so ask for that and place the volume from measured values instead
-     * of guessing what "0..120" means. Fall back to the digital volume if the
-     * control turns out to have no dB information after all. */
-    static bool hw_vol_checked = false;
-    static bool hw_vol_ok = false;
-    static bool hw_vol_has_db = false;
-    static long hw_min, hw_max, hw_min_mdb, hw_step_mdb;
-    if(!hw_vol_checked)
+    /* Prefer the codec's own volume: attenuating in software throws away bits -
+     * at -43dB, where the digital range ends, only about a third of the DAC's
+     * 16 are left - while the hardware attenuates after the converter and keeps
+     * them all. The curve itself is not ours to reproduce, Sony loads a
+     * model-specific table into the codec, so the step comes from what ALSA
+     * publishes about the control rather than from what "0..120" might mean. */
+    const int min_pcm = -430;
+    const int max_pcm = 0;
+    probe_hw_volume();
+    if(hw_vol.usable)
     {
-        hw_vol_checked = true;
-        hw_vol_ok = alsa_controls_get_range(NWA30_VOLUME_CTL, &hw_min, &hw_max) &&
-                    hw_max > hw_min;
-        /* A dB scale is the accurate way to place the volume, but this
-         * player's driver does not publish one, so fall back to spreading
-         * Rockbox's range evenly over the control's steps. That keeps the
-         * attenuation in the codec, where it costs no bits; it only means the
-         * knob may not feel perfectly even, since we cannot know how Sony
-         * spaced the steps. */
-        hw_vol_has_db = hw_vol_ok &&
-                        alsa_controls_get_db_range(NWA30_VOLUME_CTL, &hw_min_mdb,
-                                                   &hw_step_mdb) &&
-                        hw_step_mdb > 0;
-        if(hw_vol_has_db)
-            printf("audio: '%s' %ld..%ld = %ld..%ld dB in %ld.%02ld dB steps\n",
-                NWA30_VOLUME_CTL, hw_min, hw_max, hw_min_mdb / 100,
-                (hw_min_mdb + (hw_max - hw_min) * hw_step_mdb) / 100,
-                hw_step_mdb / 100, hw_step_mdb % 100);
-        else if(hw_vol_ok)
-            printf("audio: '%s' %ld..%ld, no dB scale published - mapping %d..%d dB onto it\n",
-                NWA30_VOLUME_CTL, hw_min, hw_max, NWA30_VOL_MIN / 10, NWA30_VOL_MAX / 10);
-        else
-            printf("audio: no '%s' control, keeping volume in software\n",
-                NWA30_VOLUME_CTL);
-        fflush(stdout);
-    }
-
-    int min_pcm = -430;
-    int max_pcm = 0;
-    if(hw_vol_ok)
-    {
-        /* the driver takes one value for both channels, so use the louder and
+        /* one value covers both channels, so place the louder in hardware and
          * leave any balance to the digital volume below */
         int vol = MAX(vol_l, vol_r);
-        long step, placed_tenth_db;
-        if(hw_vol_has_db)
-        {
-            /* requested volume is in tenth-dB, the TLV is in hundredths */
-            step = (vol * 10 - hw_min_mdb + hw_step_mdb / 2) / hw_step_mdb + hw_min;
-            if(step < hw_min)
-                step = hw_min;
-            if(step > hw_max)
-                step = hw_max;
-            placed_tenth_db = (hw_min_mdb + (step - hw_min) * hw_step_mdb) / 10;
-        }
-        else
-        {
-            /* No dB information. Sony's drivers take a percentage - the older
-             * players' code says as much - so the control is linear in
-             * amplitude, not in decibels. Spreading our range evenly over the
-             * steps therefore put nearly the whole audible range into the
-             * first few of them: a touch above minimum was already loud.
-             * Convert properly instead: the step is the amplitude ratio the
-             * requested attenuation works out to. */
-            long factor = fp_factor(fp_div(vol, 10, 16), 16); /* 1<<16 = 0dB */
-            long span = hw_max - hw_min;
-            if(factor >= (1 << 16))
-                step = hw_max;
-            else
-            {
-                /* round up, so the hardware never attenuates past what was
-                 * asked for and the digital volume only ever has to take a
-                 * little more off, not put any back */
-                step = hw_min + ((span * factor + (1 << 16) - 1) >> 16);
-            }
-            /* Below roughly -40dB there is no step left to land on, and the
-             * steps are coarse well before that, so hand the difference to
-             * the digital volume. It costs bits, but only where there is
-             * headroom to spare - at these levels the signal is far above the
-             * noise floor anyway. */
-            placed_tenth_db = factor_to_tenth_db(
-                span ? fp_div(step - hw_min, span, 16) : (1 << 16));
-        }
-        long lstep = step;
-        alsa_controls_set_ints(NWA30_VOLUME_CTL, 1, &lstep);
+        long placed_tenth_db;
+        long step = hw_volume_step(vol, &placed_tenth_db);
+        alsa_controls_set_ints(NWA30_VOLUME_CTL, 1, &step);
         vol_l -= placed_tenth_db;
         vol_r -= placed_tenth_db;
         /* The stock HAL drives only "master volume", "headphone amp" and
-         * "output device" - nothing else - so at step hw_max we are at the
-         * same ceiling it has. Say where each request lands, so "not loud
-         * enough" can be checked against what was actually set rather than
-         * argued about. */
+         * "output device", so at hw_vol.max we are at the same ceiling it has.
+         * Report where each request lands, so "not loud enough" can be checked
+         * against what was set rather than argued about. */
         printf("audio: volume %d.%d dB -> %s %ld/%ld, digital %d.%d dB\n",
-            vol / 10, abs(vol) % 10, NWA30_VOLUME_CTL, step, hw_max,
+            vol / 10, abs(vol) % 10, NWA30_VOLUME_CTL, step, hw_vol.max,
             vol_l / 10, abs(vol_l) % 10);
         fflush(stdout);
     }
-    if(vol_l < min_pcm)
-        vol_l = min_pcm;
-    if(vol_l > max_pcm)
-        vol_l = max_pcm;
-    if(vol_r < min_pcm)
-        vol_r = min_pcm;
-    if(vol_r > max_pcm)
-        vol_r = max_pcm;
+    vol_l = MAX(min_pcm, MIN(max_pcm, vol_l));
+    vol_r = MAX(min_pcm, MIN(max_pcm, vol_r));
     pcm_set_mixer_volume(vol_l, vol_r);
 #else
     /* FIXME at the moment we don't support balance and just average left and right.

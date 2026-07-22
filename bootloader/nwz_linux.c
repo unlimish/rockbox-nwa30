@@ -118,10 +118,24 @@ int get_icon_y(void)
 #define ROCKBOX_BIN        "/contents/.rockbox/rockbox.sony"
 #define ROCKBOX_LIB_DIR    "/contents/.rockbox/lib"
 #define ROCKBOX_CODECS_DIR "/contents/.rockbox/codecs"
+#define ROCKBOX_ARGV0      "rockbox.sony"
 /* Staging area on a filesystem we are allowed to execute from, see
  * boot_rockbox(). /tmp is a 32MB tmpfs on this platform. */
 #define STAGE_DIR       "/tmp/rockbox"
 #define STAGE_CODECS_DIR STAGE_DIR "/codecs"
+
+static bool write_all(int fd, const char *buf, size_t len)
+{
+    while(len > 0)
+    {
+        ssize_t written = write(fd, buf, len);
+        if(written <= 0)
+            return false;
+        buf += written;
+        len -= written;
+    }
+    return true;
+}
 
 /* copy a file, giving the copy the requested mode. Returns true on success. */
 static bool copy_file(const char *src, const char *dst, mode_t mode)
@@ -138,22 +152,8 @@ static bool copy_file(const char *src, const char *dst, mode_t mode)
     bool ok = true;
     char buf[16384];
     ssize_t len;
-    while((len = read(in, buf, sizeof(buf))) > 0)
-    {
-        ssize_t off = 0;
-        while(off < len)
-        {
-            ssize_t wr = write(out, buf + off, len - off);
-            if(wr <= 0)
-            {
-                ok = false;
-                break;
-            }
-            off += wr;
-        }
-        if(!ok)
-            break;
-    }
+    while(ok && (len = read(in, buf, sizeof(buf))) > 0)
+        ok = write_all(out, buf, len);
     if(len < 0)
         ok = false;
     /* the mode given to open() is masked by the umask, so be explicit */
@@ -167,9 +167,8 @@ static bool copy_file(const char *src, const char *dst, mode_t mode)
     return ok;
 }
 
-/* Copy every regular file in src_dir into dst_dir (which is created if
- * missing), non-recursively. Used to stage both the .so libraries and the
- * codecs into tmpfs - see the comment above boot_rockbox() for why. */
+/* Copy every file in src_dir into dst_dir, which is created if missing.
+ * Non-recursive; used to stage both the .so libraries and the codecs. */
 static void copy_dir_flat(const char *src_dir, const char *dst_dir)
 {
     mkdir(dst_dir, 0755);
@@ -192,24 +191,10 @@ static void copy_dir_flat(const char *src_dir, const char *dst_dir)
     closedir(dir);
 }
 
-/* Copy everything Rockbox needs to run into STAGE_DIR and run it from there.
- *
- * The user partition holding .rockbox is a FAT filesystem that this platform
- * does not let us execute from: exec'ing rockbox.sony off it fails with
- * EACCES, and if it is mounted noexec then mapping our bundled libasound out
- * of it would fail as well. /tmp is a tmpfs we can both write to and execute
- * from, so stage the binary (and the libraries next to it) there.
- *
- * Falls back to running it in place, which is what the icx players do and
- * costs nothing to try. Returns true if Rockbox ran (and has since exited),
- * false if it could not be started at all. */
-#define ROCKBOX_ARGV0 "rockbox.sony"
-
-/* Is a Rockbox already running? Something in the stock userspace kills the
- * application we replaced about half a minute after it starts, so we hand
- * Rockbox its own session (see boot_rockbox()) and it outlives us. The system
- * then starts us again in its place, and we must not launch a second one on
- * top of the first. */
+/* Something in the stock userspace kills the application we replaced about half
+ * a minute after it starts, so Rockbox is given a session of its own and
+ * outlives us. The system then starts us again in its place, and we must not
+ * launch a second Rockbox on top of the first. */
 static bool rockbox_is_running(void)
 {
     bool found = false;
@@ -243,99 +228,114 @@ static bool rockbox_is_running(void)
 /* defined below, next to main() where the log is first opened */
 int open_log(void);
 
+/* Everything Rockbox needs, copied where it can be executed from.
+ *
+ * The user partition holding .rockbox is a FAT filesystem this platform does
+ * not let us execute from: exec'ing rockbox.sony off it fails with EACCES, and
+ * mapping our bundled libasound out of a noexec mount fails too. Codecs are
+ * worse still - they are dlopen()'d at runtime, which is rejected both straight
+ * from /contents and for anything the *running* rockbox.sony writes into tmpfs
+ * itself. Only files that were already there before exec can be loaded, which
+ * is why the codecs have to be staged here rather than by Rockbox. See
+ * nwa30_stage_for_exec() in lc-unix.c for the matching lookup. */
+static void stage_rockbox_libraries(void)
+{
+    copy_dir_flat(ROCKBOX_LIB_DIR, STAGE_DIR);
+    copy_dir_flat(ROCKBOX_CODECS_DIR, STAGE_CODECS_DIR);
+    setenv("LD_LIBRARY_PATH", STAGE_DIR, 1);
+}
+
+/* ENOENT from exec does not mean the binary is missing - we just wrote it - but
+ * that its ELF interpreter is, which is what a soft-float build looks like. */
+static void report_exec_failure(const char *path)
+{
+    int err = errno; /* printf() is free to clobber errno */
+    printf("cannot fork: %s\n", strerror(err));
+    if(err != ENOENT)
+        return;
+    struct stat st;
+    printf("  staged size: %ld\n",
+        stat(path, &st) == 0 ? (long)st.st_size : -1L);
+    printf("  /lib/ld-linux-armhf.so.3 (hard float): %s\n",
+        access("/lib/ld-linux-armhf.so.3", F_OK) == 0 ? "present" : "MISSING");
+    printf("  /lib/ld-linux.so.3 (soft float): %s\n",
+        access("/lib/ld-linux.so.3", F_OK) == 0 ? "present" : "MISSING");
+}
+
+/* Wait for Rockbox without holding the log open. The log lives on /contents and
+ * one descriptor there is enough to keep the partition busy, which would stop
+ * Rockbox handing it to a USB host. We must not keep a dup() to restore from,
+ * since that descriptor holds the file just as firmly; reopen instead. Nothing
+ * is printed in between - we are about to block. */
+static int wait_for_rockbox(pid_t pid)
+{
+    int devnull = open("/dev/null", O_WRONLY);
+    if(devnull >= 0)
+    {
+        fflush(stdout);
+        fflush(stderr);
+        dup2(devnull, fileno(stdout));
+        dup2(devnull, fileno(stderr));
+        close(devnull);
+    }
+    int status;
+    waitpid(pid, &status, 0);
+    int log = open_log();
+    if(log >= 0)
+    {
+        dup2(log, fileno(stdout));
+        dup2(log, fileno(stderr));
+        close(log);
+    }
+    return status;
+}
+
+/* Returns true if Rockbox ran and has since exited, false if it could not be
+ * started at all. Falls back to running it in place, which is what the icx
+ * players do and costs nothing to try. */
 static bool boot_rockbox(void)
 {
-    static const char *argv0 = ROCKBOX_ARGV0;
     char path[64];
 
     mkdir(STAGE_DIR, 0755);
-    snprintf(path, sizeof(path), "%s/%s", STAGE_DIR, argv0);
-    if(copy_file(ROCKBOX_BIN, path, 0755))
+    snprintf(path, sizeof(path), "%s/%s", STAGE_DIR, ROCKBOX_ARGV0);
+    if(!copy_file(ROCKBOX_BIN, path, 0755))
     {
-        /* Bring along the libraries we ship next to it: the binary looks for
-         * them by absolute path on the user partition, which may be just as
-         * unusable, so point the loader at the copies instead. */
-        copy_dir_flat(ROCKBOX_LIB_DIR, STAGE_DIR);
-        /* Codecs are dlopen()'d at runtime, not linked at exec time, and
-         * that runtime dlopen() fails whether the file comes straight from
-         * /contents (PROT_EXEC mmap rejected) or gets staged into tmpfs by
-         * rockbox.sony itself (file creation under STAGE_DIR from the
-         * *running* app is rejected too - only files that existed before
-         * exec, like this copy, are usable). So stage them here instead,
-         * the same way as the libraries above; see lc-unix.c's
-         * nwa30_stage_for_exec() for the matching lookup. */
-        copy_dir_flat(ROCKBOX_CODECS_DIR, STAGE_CODECS_DIR);
-        setenv("LD_LIBRARY_PATH", STAGE_DIR, 1);
-        printf("booting %s\n", path);
-        fflush(stdout);
-        /* Run Rockbox in a session of its own rather than in our place. The
-         * application we are standing in for gets killed about half a minute
-         * after it starts - SIGTERM, then SIGKILL if that is ignored - and
-         * taking Rockbox with it. In its own session it is no longer the
-         * process being killed, and simply carries on without us. */
-        pid_t pid = fork();
-        if(pid == 0)
-        {
-            setsid();
-            execl(path, argv0, NULL);
-            printf("cannot run %s: %s\n", path, strerror(errno));
-            fflush(stdout);
-            _exit(1);
-        }
-        if(pid > 0)
-        {
-            /* Let go of the log while we wait. It lives on /contents, and a
-             * single open file descriptor there is enough to keep the
-             * partition busy - which stops Rockbox handing it to a USB host,
-             * because the umount init does on its behalf fails with EBUSY.
-             * Note we must not keep a copy to restore from: dup() would go on
-             * holding the file, which is exactly what we are trying to avoid.
-             * Reopen it afterwards instead. Nothing is printed in between: we
-             * are about to block. */
-            int devnull = open("/dev/null", O_WRONLY);
-            if(devnull >= 0)
-            {
-                fflush(stdout);
-                fflush(stderr);
-                dup2(devnull, fileno(stdout));
-                dup2(devnull, fileno(stderr));
-                close(devnull);
-            }
-            /* Wait for it, so that picking Rockbox and coming back out of it
-             * returns here. If we are killed first, Rockbox keeps running and
-             * whatever replaces us will see it and stand aside. */
-            int status;
-            waitpid(pid, &status, 0);
-            int log = open_log();
-            if(log >= 0)
-            {
-                dup2(log, fileno(stdout));
-                dup2(log, fileno(stderr));
-                close(log);
-            }
-            printf("rockbox exited (status %d)\n", status);
-            return true;
-        }
-        printf("cannot fork: %s\n", strerror(errno));
-        /* ENOENT here does not mean the binary is missing - we just wrote it -
-         * but that its ELF interpreter is. Report enough to tell which. */
-        if(errno == ENOENT)
-        {
-            struct stat st;
-            printf("  staged size: %ld\n",
-                stat(path, &st) == 0 ? (long)st.st_size : -1L);
-            printf("  /lib/ld-linux-armhf.so.3 (hard float): %s\n",
-                access("/lib/ld-linux-armhf.so.3", F_OK) == 0 ? "present" : "MISSING");
-            printf("  /lib/ld-linux.so.3 (soft float): %s\n",
-                access("/lib/ld-linux.so.3", F_OK) == 0 ? "present" : "MISSING");
-        }
-    }
-    else
         printf("cannot stage %s in %s: %s\n", ROCKBOX_BIN, STAGE_DIR,
             strerror(errno));
-    /* last resort: run it where it lies */
+        fflush(stdout);
+        execl(ROCKBOX_BIN, ROCKBOX_ARGV0, NULL);
+        return false;
+    }
+
+    stage_rockbox_libraries();
+    printf("booting %s\n", path);
     fflush(stdout);
-    execl(ROCKBOX_BIN, argv0, NULL);
+
+    /* Rockbox gets a session of its own rather than running in our place: the
+     * application we stand in for is killed about half a minute after it starts
+     * - SIGTERM, then SIGKILL if that is ignored - and would take Rockbox with
+     * it. In its own session it is no longer the process being killed. */
+    pid_t pid = fork();
+    if(pid == 0)
+    {
+        setsid();
+        execl(path, ROCKBOX_ARGV0, NULL);
+        printf("cannot run %s: %s\n", path, strerror(errno));
+        fflush(stdout);
+        _exit(1);
+    }
+    if(pid > 0)
+    {
+        /* Waiting means that leaving Rockbox returns here. If we are killed
+         * first, Rockbox keeps running and whatever replaces us stands aside. */
+        printf("rockbox exited (status %d)\n", wait_for_rockbox(pid));
+        return true;
+    }
+
+    report_exec_failure(path);
+    fflush(stdout);
+    execl(ROCKBOX_BIN, ROCKBOX_ARGV0, NULL);
     return false;
 }
 
@@ -718,26 +718,23 @@ void tools_screen(void)
         nwz_power_shutdown();
 }
 
-/* open log file */
+#define LOG_FILE      "/contents/rockbox.log"
+#define LOG_FILE_OLD  LOG_FILE ".1"
+#define LOG_MAX_SIZE  1000000
+
+/* Open the log, rotating it first if it has grown too big. The mode matters:
+ * O_CREAT without one uses whatever is on the stack, and this is the only log
+ * the port has - an unreadable one has cost whole debugging sessions. */
 int open_log(void)
 {
-    /* open regular log file */
-    /* O_CREAT without a mode is undefined behaviour - whatever happens to be
-     * on the stack is used - and this is the only log the port has. */
-    int fd = open("/contents/rockbox.log", O_RDWR | O_CREAT | O_APPEND, 0666);
-    /* get its size */
+    int fd = open(LOG_FILE, O_RDWR | O_CREAT | O_APPEND, 0666);
     struct stat stat;
-    if(fstat(fd, &stat) != 0)
-        return fd; /* on error, don't do anything */
-    /* if file is too large, rename it and start a new log file */
-    if(stat.st_size < 1000000)
+    if(fstat(fd, &stat) != 0 || stat.st_size < LOG_MAX_SIZE)
         return fd;
     close(fd);
-    /* move file */
-    rename("/contents/rockbox.log", "/contents/rockbox.log.1");
-    /* re-open the file, truncate in case the move was unsuccessful */
-    return open("/contents/rockbox.log", O_RDWR | O_CREAT | O_APPEND | O_TRUNC,
-                0666);
+    rename(LOG_FILE, LOG_FILE_OLD);
+    /* truncate in case the rename did not happen */
+    return open(LOG_FILE, O_RDWR | O_CREAT | O_APPEND | O_TRUNC, 0666);
 }
 
 int main(int argc, char **argv)
