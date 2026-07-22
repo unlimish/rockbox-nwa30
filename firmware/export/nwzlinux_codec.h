@@ -21,10 +21,26 @@
 #ifndef __NWZLINUX_CODEC_H__
 #define __NWZLINUX_CODEC_H__
 
+#ifdef SONY_NWA30
+/* the S-Master amp's high/low gain range, offered as "DAC power mode" */
+#define AUDIOHW_CAPS (POWER_MODE_CAP)
+#else
 #define AUDIOHW_CAPS 0
+#endif
 
 /* Ranges from -100dB to 4dB */
 AUDIOHW_SETTING(VOLUME,       "dB", 0,  1, -100,  4, -10)
+
+#ifdef SONY_NWA30
+/* The S-Master amplifier has a second gain range, which is what the player
+ * needs to reach a normal listening level with anything but the most
+ * sensitive headphones. Expose it rather than fixing it: high gain is not
+ * free - it costs battery and headroom - and which one suits depends on what
+ * is plugged in. Rockbox's existing "DAC power mode" setting is exactly this
+ * shape (a high/low choice, saved with the other sound settings), so use it
+ * instead of inventing a control of our own. */
+AUDIOHW_SETTING(POWER_MODE,     "", 0,  1,    0,  1,   0)
+#endif
 
 enum nwz_src_t
 {

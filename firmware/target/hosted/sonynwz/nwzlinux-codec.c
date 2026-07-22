@@ -709,6 +709,20 @@ void audiohw_set_volume(int vol_l, int vol_r)
 #endif /* SONY_NWA30 */
 }
 
+#ifdef SONY_NWA30
+/* high/low gain for the S-Master amplifier, offered as Rockbox's "DAC power
+ * mode". Which control carries it depends on how the output is wired, so set
+ * whichever of the three the device turns out to have; the ones that are
+ * absent are skipped. */
+void audiohw_set_power_mode(int mode)
+{
+    const char *gain = (mode == SOUND_LOW_POWER) ? "normal" : "high";
+    nwa30_set_enum_if_present("headphone smaster se gain mode", gain);
+    nwa30_set_enum_if_present("headphone smaster gain mode", gain);
+    nwa30_set_enum_if_present("headphone smaster btl gain mode", gain);
+}
+#endif
+
 void audiohw_close(void)
 {
     hw_close();

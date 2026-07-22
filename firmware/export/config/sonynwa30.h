@@ -112,6 +112,13 @@
  * utils/nwztools/scripts/make_cjk_font.py. */
 #define DEFAULT_FONTNAME "35-Noto-Sans-CJK-JP"
 
+/* The family header points the second drive at /mnt/media, which is where the
+ * icx players mount a card. This one puts it on /contents_ext, as exfat
+ * through FUSE - so the card was there and mounted, but Rockbox was looking
+ * somewhere empty and only ever showed the internal memory. */
+#undef MULTIDRIVE_DIR
+#define MULTIDRIVE_DIR "/contents_ext"
+
 #ifndef SIMULATOR
 #undef CONFIG_BATTERY_MEASURE
 #define CONFIG_BATTERY_MEASURE PERCENTAGE_MEASURE
