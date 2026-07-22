@@ -474,15 +474,6 @@ void audiohw_preinit(void)
             printf("audio: 'master gain' set to %ld (max of %ld..%ld)\n",
                 want, lo, hi);
         }
-        /* HWGAIN is the other integer near the output; only look, since
-         * writing to a control whose meaning we have not established is how
-         * the player ended up mute last time. */
-        long hlo, hhi, hval = 0;
-        if(alsa_controls_get_range("HWGAIN", &hlo, &hhi))
-        {
-            alsa_controls_get("HWGAIN", SND_CTL_ELEM_TYPE_INTEGER, 1, &hval);
-            printf("audio: 'HWGAIN' %ld..%ld reads %ld\n", hlo, hhi, hval);
-        }
     }
     /* Unmute the whole playback path. The stock audio HAL
      * (libaudiohal-adleralsa.so) clears several mutes to start playback, and we

@@ -176,10 +176,15 @@ void alsa_controls_dump(void)
            alsa_ctl_info[i].type == SND_CTL_ELEM_TYPE_BOOLEAN ||
            alsa_ctl_info[i].type == SND_CTL_ELEM_TYPE_ENUMERATED)
         {
+            /* Asking for fewer values than the control holds is fatal, so
+             * skip anything wider than the buffer rather than truncate. */
             long vals[8];
             unsigned n = alsa_ctl_info[i].count;
-            if(n > 8)
-                n = 8;
+            if(n == 0 || n > sizeof(vals) / sizeof(vals[0]))
+            {
+                printf("  value: (%u values, not read)\n", n);
+                continue;
+            }
             alsa_controls_get(alsa_ctl_info[i].name, alsa_ctl_info[i].type, n, vals);
             printf("  value:");
             for(unsigned j = 0; j < n; j++)
