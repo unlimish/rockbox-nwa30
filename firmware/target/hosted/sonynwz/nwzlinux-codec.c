@@ -751,10 +751,32 @@ void audiohw_set_volume(int vol_l, int vol_r)
  * absent are skipped. */
 void audiohw_set_power_mode(int mode)
 {
-    const char *gain = (mode == SOUND_LOW_POWER) ? "normal" : "high";
+    bool high = (mode != SOUND_LOW_POWER);
+    const char *gain = high ? "high" : "normal";
+    printf("audio: gain mode -> %s\n", gain);
     nwa30_set_enum_if_present("headphone smaster se gain mode", gain);
     nwa30_set_enum_if_present("headphone smaster gain mode", gain);
     nwa30_set_enum_if_present("headphone smaster btl gain mode", gain);
+
+    /* Those three made no audible difference, so the amplifier's range is
+     * evidently not where the loudness is decided. There is a separate
+     * "master gain" integer alongside the volume; drive it too and say what
+     * it was, so the next log settles which of the two actually matters. */
+    long lo, hi;
+    if(alsa_controls_get_range("master gain", &lo, &hi))
+    {
+        long was = 0;
+        alsa_controls_get("master gain", SND_CTL_ELEM_TYPE_INTEGER, 1, &was);
+        long want = high ? hi : lo;
+        alsa_controls_set_ints("master gain", 1, &want);
+        long now = 0;
+        alsa_controls_get("master gain", SND_CTL_ELEM_TYPE_INTEGER, 1, &now);
+        printf("audio: 'master gain' %ld..%ld was %ld, set %ld, reads %ld\n",
+            lo, hi, was, want, now);
+    }
+    else
+        printf("audio: no 'master gain' control\n");
+    fflush(stdout);
 }
 #endif
 

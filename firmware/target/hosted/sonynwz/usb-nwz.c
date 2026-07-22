@@ -50,10 +50,12 @@
 #include <sys/wait.h>
 #include <dirent.h>
 #include <limits.h>
+#include <stdlib.h>
 #include "config.h"
 #include "disk.h"
 #include "usb.h"
 #include "sysfs.h"
+#include "font.h"
 #include "kernel.h"
 
 /* 1 while the cable is supplying power. /dev/icx_power does not exist on this
@@ -105,7 +107,7 @@ static void resume_logging(void)
  * always that something still has a file open there - and it need not be us:
  * the bootloader waits for Rockbox with its own log on the partition. Name
  * whoever it is rather than leave the next person guessing. */
-static char contents_users[512];
+static char contents_users[2048];
 
 static void collect_contents_users(void)
 {
@@ -144,6 +146,41 @@ static void collect_contents_users(void)
         closedir(fds);
     }
     closedir(proc);
+}
+
+/* Close everything of ours that still points at the partition, so init's
+ * umount does not fail with EBUSY.
+ *
+ * The USB screen already calls font_disable_all() before acknowledging, but
+ * the player still turned up with the font's glyph cache open, so do it again
+ * here - it is idempotent, and this runs later, after every thread has said it
+ * has finished with the disk. Anything left after that is a stray descriptor
+ * nobody is using: by this point the threads have all acknowledged, so a file
+ * still open is one that was cached rather than one being read. */
+static void release_contents_files(void)
+{
+    font_disable_all();
+
+    DIR *fds = opendir("/proc/self/fd");
+    if(fds == NULL)
+        return;
+    struct dirent *fd;
+    while((fd = readdir(fds)))
+    {
+        char link[sizeof("/proc/self/fd/") + NAME_MAX];
+        char target[256];
+        snprintf(link, sizeof(link), "/proc/self/fd/%s", fd->d_name);
+        ssize_t n = readlink(link, target, sizeof(target) - 1);
+        if(n <= 0)
+            continue;
+        target[n] = 0;
+        if(strncmp(target, PIVOT_ROOT "/", sizeof(PIVOT_ROOT)) != 0)
+            continue;
+        int num = atoi(fd->d_name);
+        if(num > STDERR_FILENO && num != dirfd(fds))
+            close(num);
+    }
+    closedir(fds);
 }
 
 static bool contents_mounted(void)
@@ -219,6 +256,7 @@ int disk_unmount_all(void)
     /* the current directory alone would keep the mount busy for init */
     chdir("/");
     stop_logging();
+    release_contents_files();
 
     bool asked = set_usb_config(NWZ_USB_CONFIG_MSC);
     bool released = asked && wait_for_contents(false);
@@ -255,6 +293,7 @@ int disk_mount_all(void)
         fflush(stdout);
         return 0;
     }
+    font_enable_all();
 #ifdef HAVE_MULTIDRIVE
     startup_rbhome();
 #endif
