@@ -1,10 +1,7 @@
 # Rockbox on the Sony NW-A30 (unofficial)
 
-![Rockbox running on a NW-A35: the main menu, and a track playing with album
-art](docs/nwa30/nwa30-rockbox.png)
-
-*Taken on the player itself with Rockbox's own screendump, at its native
-480x800. The body around them is a drawing, not a photograph of the device.*
+![Rockbox on three NW-A35 players: a track playing with album art, the boot
+logo, and the main menu](docs/nwa30/nwa30-rockbox.png)
 
 A work-in-progress Rockbox port to the Sony NW-A30 series (NW-A35/A36/A37),
 Sony's "Hagoromo" platform: a MediaTek MT8127 running Linux 3.10 with a
