@@ -334,19 +334,37 @@ static void action_handle_backlight(bool backlight, bool ignore_next)
  * down. */
 static bool nwa30_screenshot_combo(int button)
 {
+    static int held = 0;
     static bool armed = true;
     const int combo = BUTTON_VOL_UP | BUTTON_VOL_DOWN;
 
-    if ((button & combo) != combo)
+    /* The state has to be kept here. The queue delivers one key per event -
+     * 0x10, then 0x20 - so no single event carries both bits, and
+     * button_status() is no help either: on this target it reads 0 even while
+     * a key is repeating. */
+    if (button == BUTTON_NONE)
     {
-        if ((button & combo) == 0)
-            armed = true; /* both let go, ready for the next one */
+        /* a held key repeats, so nothing arriving means nothing is down. This
+         * also recovers the state if a release was never posted, which happens
+         * to the first keypress after the backlight has gone out. */
+        held = 0;
+        armed = true;
         return false;
     }
     if (button & BUTTON_REL)
-        return true; /* swallow the release too, it is part of the combo */
+        held &= ~(button & combo);
+    else
+        held |= button & combo;
+
+    if (held != combo)
+    {
+        if (held == 0)
+            armed = true; /* both let go, ready for the next one */
+        /* a key still down after a shot: swallow it, or the volume jumps */
+        return !armed && (button & combo) != 0;
+    }
     if (!armed)
-        return true; /* still held down, one shot is enough */
+        return true;
     armed = false;
     screen_dump();
     /* after the dump, so the message is not in the picture */

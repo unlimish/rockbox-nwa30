@@ -2288,7 +2288,10 @@ static bool dbg_fm_radio(void)
 #endif /* CONFIG_TUNER */
 #endif /* !SIMULATOR */
 
-#if !defined(APPLICATION)
+/* SONY_NWA30: this player has no other way to capture its own screen, and a
+ * cable is not the awkward trigger here that it is elsewhere - see the volume
+ * key combination in action.c, which is the everyday route. */
+#if !defined(APPLICATION) || defined(SONY_NWA30)
 extern bool do_screendump_instead_of_usb;
 
 static bool dbg_screendump(void)
@@ -2297,7 +2300,7 @@ static bool dbg_screendump(void)
     splashf(HZ, "Screendump %sabled", do_screendump_instead_of_usb?"en":"dis");
     return false;
 }
-#endif /* !APPLICATION */
+#endif /* !APPLICATION || SONY_NWA30 */
 
 extern bool write_metadata_log;
 
@@ -2889,7 +2892,7 @@ static const struct {
 #if (CONFIG_BATTERY_MEASURE != 0) && !defined(SIMULATOR)
         { "View battery", view_battery },
 #endif
-#ifndef APPLICATION
+#if !defined(APPLICATION) || defined(SONY_NWA30)
         { "Screendump", dbg_screendump },
 #endif
         { "Skin Engine RAM usage", dbg_skin_engine },
