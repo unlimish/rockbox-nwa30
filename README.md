@@ -46,6 +46,17 @@ Not working yet:
 - **Real power off and reboot are impossible.** Both need capabilities we do not
   have; see "What we are allowed to do" below.
 
+## Taking a screenshot
+
+Hold **both volume keys** together. The picture goes to `dump_0001.bmp` at the
+root of the user partition, next to `rockbox.log`, so it is there the next time
+the player is plugged in.
+
+Rockbox's own screenshot mechanism - the debug menu's "Screendump", which arms a
+dump for the next USB insertion - is compiled out of `APPLICATION` builds, and a
+cable is the one thing this player cannot spare: it is a request to the stock
+framework to take the user partition away.
+
 ## How it fits together
 
 ### Who runs what

@@ -37,6 +37,7 @@
 #include "core_alloc.h"
 
 #include "splash.h"
+#include "screendump.h"
 #include "settings.h"
 #include "misc.h"
 
@@ -319,12 +320,55 @@ static void action_handle_backlight(bool backlight, bool ignore_next)
 * if waiting for button release ACTION_NONE is returned until
 * button is released/repeated.
 */
+#ifdef SONY_NWA30
+/* Both volume keys at once takes a screenshot.
+ *
+ * The debug menu's "Screendump", which arms a dump for the next time a USB
+ * cable is inserted, is compiled out of APPLICATION builds, so this player had
+ * no way to capture its own screen at all. A key combination beats reinstating
+ * that one anyway: it needs no cable, and on this device a cable is a request
+ * to the stock framework to take the user partition away.
+ *
+ * The two volume keys are the only pair that is awkward to press by accident
+ * and safe to swallow. Power is not a candidate - held, it shuts the player
+ * down. */
+static bool nwa30_screenshot_combo(int button)
+{
+    static bool armed = true;
+    const int combo = BUTTON_VOL_UP | BUTTON_VOL_DOWN;
+
+    if ((button & combo) != combo)
+    {
+        if ((button & combo) == 0)
+            armed = true; /* both let go, ready for the next one */
+        return false;
+    }
+    if (button & BUTTON_REL)
+        return true; /* swallow the release too, it is part of the combo */
+    if (!armed)
+        return true; /* still held down, one shot is enough */
+    armed = false;
+    screen_dump();
+    /* after the dump, so the message is not in the picture */
+    splashf(HZ, "Screenshot saved");
+    return true;
+}
+#endif /* SONY_NWA30 */
+
 static inline bool action_poll_button(action_last_t *last, action_cur_t *cur)
 {
     bool ret = true;
     int *button = &cur->button;
 
     *button = button_get_w_tmo(cur->timeout);
+
+#ifdef SONY_NWA30
+    if (nwa30_screenshot_combo(*button))
+    {
+        *button = BUTTON_NONE;
+        return true;
+    }
+#endif
 
    /* ********************************************************
     * Can return button immediately, sys_event & multimedia
