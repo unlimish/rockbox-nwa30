@@ -92,9 +92,6 @@ application in that slot about half a minute in, and restarts it - which is our
 bootloader again, so it checks for a Rockbox that is already running and stands
 aside rather than starting a second one.
 
-<img src="docs/nwa30/nwa30-boot.png" alt="The Rockbox logo on the player at
-startup, with the build's commit under it" width="240" align="right" />
-
 The first thing Rockbox itself draws is the logo, with the commit it was built
 from underneath. That line is worth reading before drawing any conclusion from
 a test: a stale build looks exactly like a broken one, and this port lost whole
