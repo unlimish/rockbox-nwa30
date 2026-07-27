@@ -19,7 +19,12 @@ descent, because that is what its font names mean ("35-Adobe-Helvetica" is
 Noto CJK's metrics are much taller than its em - so the em size is searched
 for rather than assumed.
 
-    usage: make_cjk_font.py <font.otf/ttf> <pixel-height> <out.bdf>
+A weight may be given for a variable font, either as one of its named
+instances ("Medium", "Bold") or as a number on the wght axis. Noto Sans JP
+defaults to Thin, which is far too light to read on a device, so a font with
+a weight axis is set to Regular unless asked otherwise.
+
+    usage: make_cjk_font.py <font.otf/ttf> <pixel-height> <out.bdf> [weight]
 """
 import sys
 from PIL import Image, ImageDraw, ImageFont
@@ -84,19 +89,43 @@ def render(font, cp, ascent):
     return rows, w, h, xoff, yoff, advance
 
 
+def set_weight(font, weight):
+    """Pick a weight on a variable font. Named instance or wght number."""
+    try:
+        names = [n.decode("ascii", "replace") if isinstance(n, (bytes, bytearray))
+                 else n for n in font.get_variation_names()]
+    except OSError:
+        return None  # not a variable font, whatever it is is what we get
+    if weight is None:
+        weight = "Regular"
+    for name in names:
+        if name.lower() == str(weight).lower():
+            font.set_variation_by_name(name)
+            return name
+    font.set_variation_by_axes([float(weight)])
+    return str(weight)
+
+
 def main():
-    if len(sys.argv) != 4:
+    if len(sys.argv) not in (4, 5):
         sys.exit(__doc__)
     src, size, out = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+    weight = sys.argv[4] if len(sys.argv) == 5 else None
+
+    def load(px):
+        font = ImageFont.truetype(src, px)
+        return font, set_weight(font, weight)
 
     # find the em size whose ascent+descent is the requested height
     em = size
     for candidate in range(size, 0, -1):
-        a, d = ImageFont.truetype(src, candidate).getmetrics()
+        a, d = load(candidate)[0].getmetrics()
         if a + d <= size:
             em = candidate
             break
-    font = ImageFont.truetype(src, em)
+    font, picked = load(em)
+    if picked is not None:
+        print("weight: %s" % picked, file=sys.stderr)
     ascent, descent = font.getmetrics()
     print("em size %d gives height %d (%d+%d), asked for %d"
           % (em, ascent + descent, ascent, descent, size), file=sys.stderr)
@@ -112,7 +141,9 @@ def main():
     maxw = max((g[1][1] for g in glyphs), default=size)
     with open(out, "w") as f:
         f.write("STARTFONT 2.1\n")
-        f.write("FONT -rockbox-noto sans cjk jp-medium-r-normal--%d-*-*-*-*-*-iso10646-1\n" % size)
+        xlfd_weight = "bold" if picked and "bold" in picked.lower() else "medium"
+        f.write("FONT -rockbox-noto sans cjk jp-%s-r-normal--%d-*-*-*-*-*-iso10646-1\n"
+                % (xlfd_weight, size))
         f.write("SIZE %d 75 75\n" % size)
         f.write("FONTBOUNDINGBOX %d %d 0 %d\n" % (maxw, ascent + descent, -descent))
         f.write("STARTPROPERTIES 3\n")
