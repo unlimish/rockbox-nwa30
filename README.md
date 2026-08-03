@@ -93,16 +93,9 @@ bootloader again, so it checks for a Rockbox that is already running and stands
 aside rather than starting a second one.
 
 The first thing Rockbox itself draws is the logo, with the commit it was built
-from underneath. That line is worth reading before drawing any conclusion from
-a test: a stale build looks exactly like a broken one, and this port lost whole
-evenings to that.
-
-This particular capture is from the simulator rather than the device. The screen
-is up for well under a second, and neither way of taking a screenshot can reach
-it - the key handler is not running yet, and the USB trigger needs a cable. The
-pixels are the same either way; the build id is the simulator's.
-
-<br clear="right" />
+from underneath - the middle player at the top of this page. That line is worth
+reading before drawing any conclusion from a test: a stale build looks exactly
+like a broken one, and this port lost whole evenings to that.
 
 ### What Rockbox links, and what it steps around
 
