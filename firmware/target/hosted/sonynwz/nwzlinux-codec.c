@@ -339,6 +339,7 @@ void audiohw_enable_cuerev(bool en)
 
 #ifdef SONY_NWA30
 #define PCM_DEVICE_OVERRIDE_FILE  "/.rockbox/pcm_device.txt"
+#define MIXER_OVERRIDE_FILE       "/.rockbox/mixer.txt"
 #define CODEC_PROC_DIR            "/proc/icx_audio_cxd3778gf_data"
 
 /* alsa_controls_set_*() panics on a control that is missing or of another type,
@@ -468,6 +469,74 @@ static void nwa30_restore_output_gain(void)
     alsa_controls_set_ints("master gain", 1, &hi);
     printf("audio: 'master gain' set to %ld (max of %ld..%ld)\n", hi, lo, hi);
 }
+
+/* Mixer settings applied last, read from MIXER_OVERRIDE_FILE - one per line,
+ * "control name = value", '#' comments out a line:
+ *
+ *     headphone amp = smaster-btl
+ *     master gain = 20
+ *     Master Switch = 1
+ *
+ * This player has a few dozen mixer controls whose meaning is documented
+ * nowhere, and testing one of them otherwise costs a build, a transfer and a
+ * restart. Integers and booleans are set as numbers, enumerations by the name
+ * the driver lists for them. */
+static void nwa30_apply_mixer_overrides(void)
+{
+    FILE *f = fopen(MIXER_OVERRIDE_FILE, "re");
+    if(f == NULL)
+        return;
+    char line[128];
+    while(fgets(line, sizeof(line), f) != NULL)
+    {
+        char *hash = strchr(line, '#');
+        if(hash)
+            *hash = 0;
+        char *eq = strchr(line, '=');
+        if(eq == NULL)
+            continue;
+        *eq = 0;
+        char *name = line, *value = eq + 1;
+        /* trim both sides of both halves */
+        while(*name == ' ' || *name == '\t')
+            name++;
+        for(char *p = eq - 1; p >= name && (*p == ' ' || *p == '\t'); p--)
+            *p = 0;
+        while(*value == ' ' || *value == '\t')
+            value++;
+        value[strcspn(value, "\r\n")] = 0;
+        for(char *p = value + strlen(value) - 1;
+            p >= value && (*p == ' ' || *p == '\t'); p--)
+            *p = 0;
+        if(*name == 0 || *value == 0)
+            continue;
+
+        switch(alsa_controls_get_type(name))
+        {
+            case SND_CTL_ELEM_TYPE_INTEGER:
+            {
+                long v = strtol(value, NULL, 0);
+                alsa_controls_set_ints(name, 1, &v);
+                printf("audio: mixer.txt: '%s' = %ld\n", name, v);
+                break;
+            }
+            case SND_CTL_ELEM_TYPE_BOOLEAN:
+                alsa_controls_set_bool(name, strtol(value, NULL, 0) != 0);
+                printf("audio: mixer.txt: '%s' = %s\n", name,
+                    strtol(value, NULL, 0) ? "on" : "off");
+                break;
+            case SND_CTL_ELEM_TYPE_ENUMERATED:
+                alsa_controls_set_enum(name, value);
+                printf("audio: mixer.txt: '%s' = '%s'\n", name, value);
+                break;
+            default:
+                printf("audio: mixer.txt: no control '%s', skipping\n", name);
+                break;
+        }
+    }
+    fclose(f);
+    fflush(stdout);
+}
 #endif
 
 void audiohw_set_playback_src(enum nwz_src_t src)
@@ -533,7 +602,12 @@ void audiohw_preinit(void)
     nwa30_set_bool_if_present("playback mute", false);
     nwa30_set_bool_if_present("digital playback mute", false);
     nwa30_set_bool_if_present("headphone mute", false);
-    nwa30_set_bool_if_present("Master Switch", true);
+    /* "Master Switch" is deliberately not touched. It belongs to the SoC mixer,
+     * which sits ahead of the codec, and the control dump taken before we set
+     * anything shows the driver leaves it at 0 - the state the stock firmware
+     * plays in, since nothing in /system writes it either. We used to set it
+     * true while hunting silence, and that is the one gain stage we were
+     * driving differently from the stock firmware. */
     /* Before routing anything to the amplifier, not after: it powers up on
      * 'normal' and changing it later - which is what the "DAC power mode"
      * setting did - made no audible difference, as though the value had been
@@ -578,6 +652,8 @@ void audiohw_preinit(void)
     /* the CXD3778GF has no "Sampling Rate" control (checked in the kernel),
      * this simply leaves has_sample_rate false */
     has_sample_rate = alsa_has_control("Sampling Rate");
+    /* last, so anything above can be overridden without a rebuild */
+    nwa30_apply_mixer_overrides();
 #else
     /* turn on codec */
     alsa_controls_set_bool("CODEC Power Switch", true);
