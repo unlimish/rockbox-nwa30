@@ -2051,10 +2051,11 @@ const struct settings_list settings[] = {
                 formatter_time_unit_0_is_off, getlang_time_unit_0_is_off, NULL),
 #if CONFIG_TUNER
     CHOICE_SETTING(0, fm_region, LANG_FM_REGION, 0,
-                   "fm_region", "eu,us,jp,kr,it,wo", set_radio_region, 6,
+                   "fm_region", "eu,us,jp,kr,it,wo,jpwide", set_radio_region, 7,
                    ID2P(LANG_FM_EUROPE), ID2P(LANG_FM_US),
                    ID2P(LANG_FM_JAPAN), ID2P(LANG_FM_KOREA),
-                   ID2P(LANG_FM_ITALY), ID2P(LANG_FM_OTHER)),
+                   ID2P(LANG_FM_ITALY), ID2P(LANG_FM_OTHER),
+                   ID2P(LANG_FM_JAPAN_WIDE)),
 #endif
 
 #if CONFIG_TUNER

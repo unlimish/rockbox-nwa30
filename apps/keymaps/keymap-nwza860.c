@@ -97,9 +97,19 @@ static const struct button_mapping button_context_list[]  = {
 }; /* button_context_list */
 
 #ifdef CONFIG_TUNER
+/* This pad has four keys and a touchscreen the radio screen cannot use, so the
+ * long press on play opens the FM menu rather than stopping. Everything that
+ * would otherwise need a key of its own is in there - the mode, the preset
+ * list, the region - and it is only there because this keymap deliberately
+ * leaves FM_MODE and FM_PRESET undefined, which is what makes radio_menu.c
+ * include them. Without it the screen opens in preset mode with no presets and
+ * nothing moves.
+ *
+ * Stopping is no loss: ACTION_FM_STOP leaves the screen exactly as FM_EXIT
+ * does, and the power button still does that. */
 static const struct button_mapping button_context_radio[]  = {
     { ACTION_FM_PLAY,                  BUTTON_PLAY|BUTTON_REL,           BUTTON_PLAY },
-    { ACTION_FM_STOP,                  BUTTON_PLAY|BUTTON_REPEAT,        BUTTON_NONE },
+    { ACTION_FM_MENU,                  BUTTON_PLAY|BUTTON_REPEAT,        BUTTON_PLAY },
 
     { ACTION_FM_EXIT,                  BUTTON_BACK,                      BUTTON_NONE },
 

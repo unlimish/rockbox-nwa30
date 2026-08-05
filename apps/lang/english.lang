@@ -17183,3 +17183,17 @@
     *: "Reboot"
   </voice>
 </phrase>
+<phrase>
+  id: LANG_FM_JAPAN_WIDE
+  desc: in the radio region setting, Japan including the FM simulcast band
+  user: core
+  <source>
+    *: "Japan (wide)"
+  </source>
+  <dest>
+    *: "Japan (wide)"
+  </dest>
+  <voice>
+    *: "Japan wide"
+  </voice>
+</phrase>

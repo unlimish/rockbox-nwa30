@@ -45,9 +45,9 @@ Not working yet:
   Rockbox has a counterpart for. Use the stock firmware for that.
 - **Plugins are not built** (`plugins=""`): most have no keymap for this pad and
   stop the build. `db_folder_select.rock` being absent is the visible one.
-- **FM radio**: `radio-nwz.c` speaks the older players' icx ioctls and this
-  tuner answers ENOTTY, so it is left out. Sony's kernel source has enough to
-  change that; see "The FM tuner" below.
+- ~~FM radio~~ **works.** Tuning, stereo and signal strength come through the
+  tuner's V4L2 node; see "The FM tuner" below. Set the region to **Japan (wide)**
+  for 76-95MHz, which is what this player's band actually is.
 - **Real power off and reboot.** `reboot(2)` needs a capability we do not have,
   so shutdown falls through to suspend and "Reboot" exits to the boot menu.
   Sony's own `force_power_off` was the obvious way round and it is **not open to
