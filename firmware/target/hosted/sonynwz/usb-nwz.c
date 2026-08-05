@@ -81,6 +81,11 @@ static void stop_logging(void)
 {
     fflush(stdout);
     fflush(stderr);
+    /* fflush only gets the lines as far as the kernel. The partition is about
+     * to be handed to a host, and a log that arrives empty at the one moment it
+     * is wanted has cost this port several rounds. */
+    fsync(fileno(stdout));
+    fsync(fileno(stderr));
     int devnull = open("/dev/null", O_WRONLY);
     if(devnull < 0)
         return;
@@ -88,6 +93,7 @@ static void stop_logging(void)
     dup2(devnull, fileno(stderr));
     if(devnull > fileno(stderr))
         close(devnull);
+    sync();
 }
 
 static void resume_logging(void)

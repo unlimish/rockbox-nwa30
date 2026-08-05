@@ -247,9 +247,18 @@ static void print_mount_info(void)
  * their kernel release, which leaves the question of what interface it does
  * offer - and a V4L2 node would be a far easier one to drive than a private
  * ioctl set. Cheap to ask, so ask on every boot until it is answered. */
-static void print_tuner_nodes(void)
+/* Questions about the device that are answered by looking, written to their own
+ * small file as well as to the log.
+ *
+ * The log is the natural place for this, but it lives on the partition that
+ * gets handed to a USB host, and it has arrived empty at exactly the moment it
+ * was wanted more than once. This file is opened, written and closed in one go
+ * at startup, so there is nothing of it left in a buffer to lose. */
+#define PROBE_REPORT_FILE "/contents/nwa30_probe.txt"
+
+static void probe_device(void)
 {
-    static const char *candidates[] =
+    static const char *tuner_nodes[] =
     {
         "/dev/radio0", "/dev/radio", "/dev/icx_radio", "/dev/si4708",
         /* The other way in. Sony's board file
@@ -257,12 +266,47 @@ static void print_tuner_nodes(void)
          * bus 2 at address 0x10, with GPIO278 as its reset - and the Si470x
          * register map is public, so the chip can be driven without their
          * driver, provided i2c-dev is there and lets us at the bus. */
-        "/dev/i2c-2", "/dev/i2c/2",
+        "/dev/i2c-0", "/dev/i2c-1", "/dev/i2c-2", "/dev/i2c-3", "/dev/i2c/2",
     };
-    for(unsigned i = 0; i < ARRAYLEN(candidates); i++)
-        if(access(candidates[i], F_OK) == 0)
-            printf("tuner: %s exists%s\n", candidates[i],
-                access(candidates[i], R_OK | W_OK) == 0 ? "" : " (not ours to open)");
+    static const char *writable[] =
+    {
+        "/sys/devices/platform/icx_pm_helper/force_power_off",
+    };
+
+    FILE *f = fopen(PROBE_REPORT_FILE, "we");
+
+    for(unsigned i = 0; i < ARRAYLEN(tuner_nodes); i++)
+    {
+        const char *path = tuner_nodes[i];
+        const char *state;
+        if(access(path, F_OK) != 0)
+            state = "absent";
+        else if(access(path, R_OK | W_OK) == 0)
+            state = "present, ours to open";
+        else
+            state = "present, NOT ours to open";
+        printf("probe: %-16s %s\n", path, state);
+        if(f)
+            fprintf(f, "%-48s %s\n", path, state);
+    }
+    for(unsigned i = 0; i < ARRAYLEN(writable); i++)
+    {
+        const char *path = writable[i];
+        const char *state = access(path, F_OK) != 0 ? "absent" :
+                            access(path, W_OK) == 0 ? "writable" :
+                                                      "read-only for us";
+        printf("probe: %s %s\n", path, state);
+        if(f)
+            fprintf(f, "%-48s %s\n", path, state);
+    }
+
+    if(f)
+    {
+        fflush(f);
+        fsync(fileno(f));
+        fclose(f);
+    }
+    fflush(stdout);
 }
 
 /* We take a percentage from "capacity" and have never read the rest. Whether
@@ -678,7 +722,7 @@ void system_init(void)
     print_restart_evidence();
     print_mount_info();
     print_battery_nodes();
-    print_tuner_nodes();
+    probe_device();
 
 #endif
     print_proc_list();
