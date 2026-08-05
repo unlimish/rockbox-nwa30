@@ -38,8 +38,10 @@ Working on the device:
 Not working yet:
 
 - **output is roughly 10 dB quieter than the stock firmware** at the same codec
-  volume. The stock player's 35/120 sounds like our 120/120, and we do reach
-  the top of `master volume`, so the loss is ahead of it.
+  volume. The stock player's 35/120 sounds like our 120/120. Very likely fixed
+  and not yet confirmed on the device: until now the port was playing through
+  `hw:0,1`, which Sony's kernel source says is the FM radio path, not the music
+  one. See "Sony publishes the source for this player".
 - **Bluetooth.** Audio goes out through Sony's own stack, which is not something
   Rockbox has a counterpart for. Use the stock firmware for that.
 - **Plugins are not built** (`plugins=""`): most have no keymap for this pad and
@@ -48,6 +50,34 @@ Not working yet:
   answer the ioctls the existing driver sends, so it is left out.
 - **Real power off and reboot are impossible.** Both need capabilities we do not
   have; see "What we are allowed to do" below.
+
+## Sony publishes the source for this player
+
+`oss.sony.net` carries the GPL source for the page titled
+[NW-WM1A/NW-WM1Z/NW-A37HN/NW-A36HN/NW-A35HN/**NW-A35**](https://oss.sony.net/Products/Linux/Audio/NW-WM1A.html) -
+this player is named on it. `linux-kernel-3.10.26.tar.gz` is the kernel this
+port runs on, and it contains `sound/soc/codecs/cxd3778gf/`, the driver behind
+every mixer control this port pokes at.
+
+Read it before guessing at anything audio. It settles in minutes questions this
+port spent weeks on:
+
+- **which PCM device is the music path** - see the table further down, this was
+  the big one
+- `master volume` is not an attenuator but an index into a table that writes
+  four registers at once, `SDIN1VOL`, `SDIN2VOL`, `PLAYVOL` and `PHV_L/R`
+- the table itself is loaded from userspace through
+  `/proc/icx_audio_cxd3778gf_data/ovt`, which is mode 0600 and so unreadable to
+  us; the copy in the source is a stub
+- **the amp gain modes do nothing on this player.** `get_table_index()` picks
+  the high-gain table for an A-series board whatever the mode says -
+  `/* TYPE_A is fixed HG */`
+- `0x33` is the mute value for the volume registers, and `0x00` is 0 dB
+
+What it does not cover is the userspace: `HgrmMediaPlayerApp`,
+`libaudiohal-adleralsa.so`, `libVolumeServiceFw.so` and the hagodaemon IPC are
+proprietary, so everything under "The Sony daemons" below stays reverse
+engineered.
 
 ## Taking a screenshot
 
@@ -132,11 +162,23 @@ flowchart TB
     style sony stroke-dasharray: 5 5
 ```
 
-`hw:0,1` is the only device on the codec's "STD" DAI; the other five are Sony's
-own "ICX" paths. It takes `S16_LE` and nothing else, and it really runs at
-44.1kHz - it accepts other rates without complaint but the clock does not
-follow, so a 96kHz track played at 0.46x until the target claimed only what the
-hardware does.
+Which of the card's six PCM devices to open is the single question that has cost
+this port the most, and it was answered by reading Sony's kernel source rather
+than by any amount of listening. `sound/soc/mediatek/mt8590/icx-machine-links.c`
+wires device 0 to the codec's ICX DAI and device 1 to its STD DAI, and
+`sound/soc/codecs/cxd3778gf/cxd3778gf.c` names their streams:
+
+| device | DAI | stream | takes |
+| --- | --- | --- | --- |
+| `hw:0,0` `cxd3778gf-hires-out` | ICX | `Playback` | 5512-384000 Hz, S16/S24/S32/DSD |
+| `hw:0,1` `cxd3778gf-standard` | STD | **`FM Playback`** | 44100 Hz only, S16_LE only |
+
+Device 0 is not a hi-res-only output despite the name - it is the playback path,
+which also carries hi-res. **Device 1 is the FM radio.** This port spent months
+playing music through the tuner's input, and everything it concluded about the
+hardware from that - that the codec takes `S16_LE` and nothing else, that it
+really runs at 44.1kHz whatever it claims - was true of the tuner path and of
+nothing else.
 
 ### The Sony daemons
 

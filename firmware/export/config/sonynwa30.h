@@ -50,19 +50,30 @@
  * is no working FM radio here yet. */
 #define NWZ_NO_TUNER
 
-/* The CXD3778GF exposes several PCM devices; the normal (non-hi-res) music
- * playback path is card 0 device 1 (cxd3778gf-standard), confirmed by recon.
- * Device 0 is the hi-res-only output.
+/* Music goes out of card 0 device 0, "cxd3778gf-hires-out".
+ *
+ * The name is misleading and cost this port a great deal: device 0 is not a
+ * hi-res-only output, it is *the* playback path, which happens to also carry
+ * hi-res. Sony's own kernel source settles it. The machine driver
+ * (sound/soc/mediatek/mt8590/icx-machine-links.c) wires device 0 to the codec's
+ * ICX DAI and device 1 to its STD DAI, and the codec driver names their streams:
+ *
+ *     ICX DAI  "Playback"      5512..384000 Hz, S16/S24/S32/DSD
+ *     STD DAI  "FM Playback"   44100 Hz only, S16_LE only
+ *
+ * Device 1 is the FM radio path. Everything this port used to believe about the
+ * hardware - that it takes S16_LE only and runs at 44.1kHz only - was measured
+ * off that, and was a property of the tuner path rather than of the player.
+ *
+ * Capture stays on device 1, which is where the tuner actually is.
  *
  * Use the raw "hw" device instead of "plughw": snd_pcm_open() is called during
  * boot (pcm_init -> sink_dma_init) and panics on failure, and "plughw" is
  * resolved through the alsa-lib configuration (/usr/share/alsa) which may not
  * be present on this player. "hw" is built into alsa-lib and opens without any
- * config as long as the device node exists (pcmC0D1p, confirmed by recon). The
- * trade-off is that "hw" does no automatic format conversion, so if the codec
- * refuses Rockbox's format the audio may be wrong until the format is matched -
- * but set_hwparams() failures are non-fatal, so the player still boots. */
-#define DEFAULT_PLAYBACK_DEVICE "hw:0,1"
+ * config as long as the device node exists. Set /.rockbox/pcm_device.txt to try
+ * another one without rebuilding. */
+#define DEFAULT_PLAYBACK_DEVICE "hw:0,0"
 #define DEFAULT_CAPTURE_DEVICE  "hw:0,1"
 
 #include "sonynwzlinux.h"
@@ -71,22 +82,12 @@
 #undef CONFIG_KEYPAD
 #define CONFIG_KEYPAD SONY_NWZA860_PAD
 
-/* The rest of the family takes 32-bit samples, but this player's CXD3778GF
- * does not: asked what it accepts, hw:0,1 answers "S16_LE" and nothing else,
- * and set_hwparams() was failing at the format step every time playback
- * started - which looked like a track that ends the instant it begins. */
-#undef HAVE_ALSA_32BIT
+/* HAVE_ALSA_32BIT and the family's HW_SAMPR_CAPS both stand: the ICX DAI this
+ * player's device 0 is wired to takes S16/S24/S32 and everything from 5512 to
+ * 384000 Hz. They were both switched off here while the port was talking to
+ * device 1, whose "FM Playback" stream really is S16_LE at 44100 and nothing
+ * else - see the note on DEFAULT_PLAYBACK_DEVICE above. */
 
-/* hw:0,1 is the codec's "standard" PCM and it really only runs at 44.1kHz.
- * It accepts a higher rate without complaining - snd_pcm_hw_params_set_rate_near()
- * hands back exactly what it was asked for - but the clock does not follow, so
- * the samples come out at 44.1kHz regardless: a 96kHz track played at 0.46x
- * speed, pitched down to match, and 48kHz was slightly flat for the same
- * reason. Claim only what the hardware does and let the DSP resample to it.
- * (The 88.2/96k and up rates the family header lists belong to pcmC0D0p, the
- * "hires" PCM, which we do not open yet.) */
-#undef HW_SAMPR_CAPS
-#define HW_SAMPR_CAPS   SAMPR_CAP_44
 
 /* The older players leave USB entirely to the stock firmware, but here the
  * framework that would do it is frozen while Rockbox runs (see system-nwz.c),
