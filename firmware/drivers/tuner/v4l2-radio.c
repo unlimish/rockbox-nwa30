@@ -46,7 +46,11 @@
 #endif
 
 static int radio_fd = -1;
-static bool tuner_present = false;
+/* -1 until something has looked. RADIO_PRESENT has to answer before
+ * v4l2_radio_init() has ever run: the root menu hides the radio entry when it
+ * says no, and tuner_init() is only reached from inside the radio screen -
+ * which is the thing that entry opens. */
+static int tuner_present = -1;
 /* V4L2 counts frequency in 1/16 MHz, or in 1/16 kHz when the tuner says
  * V4L2_TUNER_CAP_LOW. Getting this wrong is a factor of a thousand, so read it
  * from the tuner rather than assume. */
@@ -145,13 +149,23 @@ static bool set_frequency(int hz)
     return true;
 }
 
+/* Open once to find out whether there is a tuner at all, then let go: holding
+ * the device would keep it powered for the whole session. */
+static bool detect_tuner(void)
+{
+    if(tuner_present < 0)
+    {
+        bool was_open = radio_fd >= 0;
+        tuner_present = open_radio() ? 1 : 0;
+        if(!was_open)
+            close_radio();
+    }
+    return tuner_present > 0;
+}
+
 void v4l2_radio_init(void)
 {
-    /* Only to find out whether there is a tuner at all: the radio screen is
-     * not reachable when RADIO_PRESENT is false, and holding the device open
-     * from here would keep it powered for the whole session. */
-    tuner_present = open_radio();
-    close_radio();
+    detect_tuner();
 }
 
 int v4l2_radio_set(int setting, int value)
@@ -211,7 +225,7 @@ int v4l2_radio_get(int setting)
     switch(setting)
     {
         case RADIO_PRESENT:
-            return tuner_present ? 1 : 0;
+            return detect_tuner() ? 1 : 0;
 
         case RADIO_TUNED:
             /* "tuned" for Rockbox means the last requested frequency carries a

@@ -91,6 +91,12 @@ void tuner_init(void)
                         rda5802_get,
                         rda5802_init())
     #endif
+    #if (CONFIG_TUNER & V4L2_RADIO)
+        TUNER_TYPE_CASE(V4L2_RADIO,
+                        v4l2_radio_set,
+                        v4l2_radio_get,
+                        v4l2_radio_init())
+    #endif
     #if (CONFIG_TUNER & STFM1000)
         TUNER_TYPE_CASE(STFM1000,
                         stfm1000_set,
