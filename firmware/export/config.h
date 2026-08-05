@@ -53,6 +53,10 @@
 #define IPOD_REMOTE_TUNER   0x40 /* Apple */
 #define RDA5802    0x80 /* RDA Microelectronics */
 #define STFM1000   0x100 /* Sigmatel */
+/* A tuner the kernel already drives, reached through its V4L2 radio node
+ * rather than over a bus of our own. Used by the Sony NW-A30, whose Si4708
+ * has a vendor driver we have no source for but which registers /dev/radio0. */
+#define V4L2_RADIO 0x200
 
 /* CONFIG_CPU */
 #define MCF5249      5249

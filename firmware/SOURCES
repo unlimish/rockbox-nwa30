@@ -541,6 +541,9 @@ drivers/tuner/ipod_remote_tuner.c
 #if (CONFIG_TUNER & RDA5802)
 drivers/tuner/rda5802.c
 #endif /* (CONFIG_TUNER & RDA5802) */
+#if (CONFIG_TUNER & V4L2_RADIO)
+drivers/tuner/v4l2-radio.c
+#endif /* (CONFIG_TUNER & V4L2_RADIO) */
 #if (CONFIG_TUNER & STFM1000)
 drivers/tuner/stfm1000.c
 #endif /* (CONFIG_TUNER & STFM1000) */

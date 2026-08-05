@@ -543,23 +543,23 @@ void audiohw_set_playback_src(enum nwz_src_t src)
 {
 #ifdef SONY_NWA30
     /* The CXD3778GF has no source multiplexer: PCM playback always goes
-     * through the digital path, while the tuner is an analog input that is
-     * mixed in separately, muted by "analog playback mute".
-     *
-     * Which input that is gets picked with "analog input device", but that one
-     * is an enumeration (the device rejected being set as a switch) and we do
-     * not know its values yet, so leave it alone: whatever the system left it
-     * as is fine as long as the analog path stays muted for playback. Reading
-     * the items back is what FM radio support will need. */
+     * through the digital path, while the tuner is an analog input mixed in
+     * separately. Sony's switch_tuner() takes it in on AIN2 through PGA2 and
+     * ADC2; from here that is "analog input device", whose items the control
+     * dump gives as off/tuner/mic/line/directmic, gated by "analog playback
+     * mute". Both have to move: selecting the input without clearing the mute
+     * is silence, and clearing the mute with the input off is the same. */
     switch(src)
     {
         case NWZ_RADIO:
+            nwa30_set_enum_if_present("analog input device", "tuner");
             nwa30_set_bool_if_present("analog playback mute", false);
             break;
         case NWZ_MIC: /* not wired up on this platform */
         case NWZ_PLAYBACK:
         default:
             nwa30_set_bool_if_present("analog playback mute", true);
+            nwa30_set_enum_if_present("analog input device", "off");
             break;
     }
 #else

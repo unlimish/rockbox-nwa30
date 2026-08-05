@@ -46,9 +46,17 @@
 #define NWZ_OF_APP  "/system/vendor/sony/bin/HgrmMediaPlayerApp.of"
 
 /* This player's tuner is driven by radio_si4708icx, which does not implement
- * the ioctls radio-nwz.c uses (they come back ENOTTY on the device), so there
- * is no working FM radio here yet. */
-#define NWZ_NO_TUNER
+ * the ioctls radio-nwz.c uses - they come back ENOTTY on the device, because
+ * that driver expects the older players' register-level icx interface.
+ *
+ * What it does do is register a V4L2 radio node, and /dev/radio0 turns out to
+ * be ours to open, so the tuner is driven through that instead. Sony's board
+ * file names the part: an Si4708 on i2c bus 2 at 0x10, which is a Silicon Labs
+ * Si470x - but none of that matters when the kernel is already driving it. */
+#define NWZ_NO_TUNER            /* keeps the family's SI4700 setup out of the way */
+#undef CONFIG_TUNER
+#define CONFIG_TUNER V4L2_RADIO
+#define INPUT_SRC_CAPS SRC_CAP_FMRADIO
 
 /* Music goes out of card 0 device 0, "cxd3778gf-hires-out".
  *

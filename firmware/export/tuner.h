@@ -140,6 +140,11 @@ extern int (*tuner_get)(int setting);
 #include "ipod_remote_tuner.h"
 #endif
 
+/* A tuner the kernel drives, reached through its V4L2 radio node */
+#if (CONFIG_TUNER & V4L2_RADIO)
+#include "v4l2-radio.h"
+#endif
+
 /* SigmaTel/Freescale STFM1000 */
 #if (CONFIG_TUNER & STFM1000)
 #include "stfm1000.h"

@@ -3681,8 +3681,8 @@ fi
     output="rockbox.sony"
     boottool="$rootdir/tools/scramble -add=a30"
     bootoutput="bootloader-nwa30.sony"
-    # no radio: this player's tuner is not supported yet, see sonynwa30.h
-    appextra="gui:recorder"
+    # the tuner is driven through its V4L2 node, see sonynwa30.h
+    appextra="gui:radio:recorder"
     # Plugins need a keymap for this player's pad and most do not have one
     # (clix and friends stop the build with #error "no keymap"), so they stay
     # off until someone works through them. Note this also leaves out
