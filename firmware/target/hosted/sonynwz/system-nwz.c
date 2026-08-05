@@ -240,6 +240,31 @@ static void print_mount_info(void)
     fclose(f);
 }
 
+/* What the tuner presents itself as, if anything.
+ *
+ * radio-nwz.c speaks the icx ioctls the older players use and gets ENOTTY here,
+ * so the FM radio is left out. Sony's radio_si4708icx module has no source in
+ * their kernel release, which leaves the question of what interface it does
+ * offer - and a V4L2 node would be a far easier one to drive than a private
+ * ioctl set. Cheap to ask, so ask on every boot until it is answered. */
+static void print_tuner_nodes(void)
+{
+    static const char *candidates[] =
+    {
+        "/dev/radio0", "/dev/radio", "/dev/icx_radio", "/dev/si4708",
+        /* The other way in. Sony's board file
+         * (arch/arm/mach-mt8590/icx_radio_i2c_devs.c) puts the Si4708 on i2c
+         * bus 2 at address 0x10, with GPIO278 as its reset - and the Si470x
+         * register map is public, so the chip can be driven without their
+         * driver, provided i2c-dev is there and lets us at the bus. */
+        "/dev/i2c-2", "/dev/i2c/2",
+    };
+    for(unsigned i = 0; i < ARRAYLEN(candidates); i++)
+        if(access(candidates[i], F_OK) == 0)
+            printf("tuner: %s exists%s\n", candidates[i],
+                access(candidates[i], R_OK | W_OK) == 0 ? "" : " (not ours to open)");
+}
+
 /* We take a percentage from "capacity" and have never read the rest. Whether
  * "current_now" is there decides whether power draw can be measured at all. */
 static void print_battery_nodes(void)
@@ -653,6 +678,7 @@ void system_init(void)
     print_restart_evidence();
     print_mount_info();
     print_battery_nodes();
+    print_tuner_nodes();
 
 #endif
     print_proc_list();

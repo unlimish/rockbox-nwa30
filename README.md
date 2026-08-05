@@ -37,17 +37,17 @@ Working on the device:
 
 Not working yet:
 
-- **output is roughly 10 dB quieter than the stock firmware** at the same codec
-  volume. The stock player's 35/120 sounds like our 120/120. Very likely fixed
-  and not yet confirmed on the device: until now the port was playing through
-  `hw:0,1`, which Sony's kernel source says is the FM radio path, not the music
-  one. See "Sony publishes the source for this player".
+- ~~output is roughly 10 dB quieter than the stock firmware~~ **fixed, and
+  confirmed on the device.** The port had been playing through `hw:0,1`, which
+  Sony's kernel source shows is the FM radio path rather than the music one.
+  See "Sony publishes the source for this player".
 - **Bluetooth.** Audio goes out through Sony's own stack, which is not something
   Rockbox has a counterpart for. Use the stock firmware for that.
 - **Plugins are not built** (`plugins=""`): most have no keymap for this pad and
   stop the build. `db_folder_select.rock` being absent is the visible one.
-- **FM radio**: the tuner is a different part (`radio_si4708icx`) that does not
-  answer the ioctls the existing driver sends, so it is left out.
+- **FM radio**: `radio-nwz.c` speaks the older players' icx ioctls and this
+  tuner answers ENOTTY, so it is left out. Sony's kernel source has enough to
+  change that; see "The FM tuner" below.
 - **Real power off and reboot.** `reboot(2)` needs a capability we do not have,
   so shutdown falls through to suspend and "Reboot" exits to the boot menu. Sony's
   kernel source offers a way round for power off, tried before the fallback and
@@ -90,15 +90,35 @@ are there; `radio_si4708icx`, `wm_key`, `mtk_stp_bt_soc`, `cxd3778gf_dnc_core`
 and `icx_nvp_emmc` have no source in the tarball. `icx_si4708.h` exists but
 holds nothing except a reset GPIO. So the source does **not** help with:
 
-- **FM radio.** The driver is absent. What the tree does have is the mainline
-  `si470x` driver, and the Si4708 is that family, so the chip end is documented
-  even though Sony's glue is not. The thing to check on the device is whether
-  their module registers a V4L2 node - `radio-nwz.c` speaks the older players'
-  icx ioctls, which is why they come back ENOTTY here, and a `/dev/radio0`
-  would be a different and much easier target.
+- **FM radio.** Sony's `radio_si4708icx` is absent. Their *board* file is not,
+  though, and it gives away enough to go round the driver - see below.
 - **Bluetooth.** `mtk_stp_bt_soc` is not in the tree either, and it would not be
   enough regardless: BT audio needs a host stack and an SBC encoder above the
   transport, and Rockbox has neither.
+
+### The FM tuner
+
+Not working, but no longer a black box. Three things are now known and none of
+them needed the missing driver.
+
+**Where the chip is.** `arch/arm/mach-mt8590/icx_radio_i2c_devs.c` registers it
+as `Si4708icx` on **i2c bus 2, address 0x10**, with **GPIO278** as reset. The
+Si4708 is a Silicon Labs Si470x, whose register map is published - and the
+mainline `si470x` driver is in the same tarball as a working reference for the
+power-up and tuning sequence. So the tuner can be driven directly through
+`/dev/i2c-2` without Sony's module, if i2c-dev is present and lets uid `system`
+at the bus. Startup reports whether it does.
+
+**How its audio gets out.** It is not a PCM stream. `switch_tuner()` in
+`cxd3778gf_control.c` takes the tuner in on the codec's **AIN2** analog input,
+through PGA2 at +3dB into ADC2. In ALSA terms that is `analog input device` =
+`tuner`, and `analog playback mute` - which playback deliberately leaves on -
+is what silences it.
+
+**Why device 1 exists.** The STD DAI carries the stream the codec driver calls
+"FM Playback", 44.1kHz and S16_LE only. Those limits belong to the tuner path;
+believing they were the player's is what kept this port on the quiet device for
+weeks.
 
 Nor does it cover the userspace: `HgrmMediaPlayerApp`,
 `libaudiohal-adleralsa.so`, `libVolumeServiceFw.so` and the hagodaemon IPC are
