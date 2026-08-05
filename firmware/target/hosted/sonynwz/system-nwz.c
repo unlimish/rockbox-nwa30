@@ -154,17 +154,34 @@ static void claim_single_instance(void)
 
 #ifdef SONY_NWA30
 /* The kernel command line records why the machine last came up, which tells a
- * watchdog timeout apart from an orderly restart. */
+ * watchdog timeout apart from an orderly restart. Sony's icx_pm_helper driver
+ * publishes the same thing split into flags, which is less ambiguous - the
+ * names come from drivers/power/icx_pm_helper.c in their kernel source. */
 static void print_boot_reason(void)
 {
     char line[1024];
-    if(!read_first_line("/proc/cmdline", line, sizeof(line)))
-        return;
-    const char *reason = strstr(line, "bootreason=");
-    if(reason != NULL)
+    if(read_first_line("/proc/cmdline", line, sizeof(line)))
     {
-        reason += sizeof("bootreason=") - 1;
-        printf("Boot reason: %.*s\n", (int)strcspn(reason, " "), reason);
+        const char *reason = strstr(line, "bootreason=");
+        if(reason != NULL)
+        {
+            reason += sizeof("bootreason=") - 1;
+            printf("Boot reason: %.*s\n", (int)strcspn(reason, " "), reason);
+        }
+    }
+
+    static const char *flags[] =
+    {
+        "boot_powerkey", "boot_reset", "boot_reboot",
+        "boot_deadbat", "boot_wdt", "boot_thermal", "boot_option",
+    };
+    for(unsigned i = 0; i < ARRAYLEN(flags); i++)
+    {
+        char path[PATH_MAX], value[64];
+        snprintf(path, sizeof(path),
+            "/sys/devices/platform/icx_pm_helper/%s", flags[i]);
+        if(read_first_line(path, value, sizeof(value)))
+            printf("  %-14s %s\n", flags[i], value);
     }
 }
 

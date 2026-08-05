@@ -48,8 +48,10 @@ Not working yet:
   stop the build. `db_folder_select.rock` being absent is the visible one.
 - **FM radio**: the tuner is a different part (`radio_si4708icx`) that does not
   answer the ioctls the existing driver sends, so it is left out.
-- **Real power off and reboot are impossible.** Both need capabilities we do not
-  have; see "What we are allowed to do" below.
+- **Real power off and reboot.** `reboot(2)` needs a capability we do not have,
+  so shutdown falls through to suspend and "Reboot" exits to the boot menu. Sony's
+  kernel source offers a way round for power off, tried before the fallback and
+  not yet confirmed to be permitted for us; see the section below.
 
 ## Sony publishes the source for this player
 
@@ -74,7 +76,31 @@ port spent weeks on:
   `/* TYPE_A is fixed HG */`
 - `0x33` is the mute value for the volume registers, and `0x00` is 0 dB
 
-What it does not cover is the userspace: `HgrmMediaPlayerApp`,
+It also gives a way to turn the player off. `drivers/power/icx_pm_helper.c`
+registers a platform device with a `force_power_off` attribute that calls
+`mt_power_off()`, so `/sys/devices/platform/icx_pm_helper/force_power_off` is
+worth a write before falling back to suspend. The same device publishes why the
+machine last booted, split into flags - `boot_powerkey`, `boot_wdt`,
+`boot_deadbat`, `boot_thermal` and friends - which beats parsing
+`bootreason=` out of the kernel command line.
+
+**Several of the drivers this player loads are missing from the release.** Of
+the modules in `/proc/modules`, only the audio codec and the `icx_usb*` headers
+are there; `radio_si4708icx`, `wm_key`, `mtk_stp_bt_soc`, `cxd3778gf_dnc_core`
+and `icx_nvp_emmc` have no source in the tarball. `icx_si4708.h` exists but
+holds nothing except a reset GPIO. So the source does **not** help with:
+
+- **FM radio.** The driver is absent. What the tree does have is the mainline
+  `si470x` driver, and the Si4708 is that family, so the chip end is documented
+  even though Sony's glue is not. The thing to check on the device is whether
+  their module registers a V4L2 node - `radio-nwz.c` speaks the older players'
+  icx ioctls, which is why they come back ENOTTY here, and a `/dev/radio0`
+  would be a different and much easier target.
+- **Bluetooth.** `mtk_stp_bt_soc` is not in the tree either, and it would not be
+  enough regardless: BT audio needs a host stack and an SBC encoder above the
+  transport, and Rockbox has neither.
+
+Nor does it cover the userspace: `HgrmMediaPlayerApp`,
 `libaudiohal-adleralsa.so`, `libVolumeServiceFw.so` and the hagodaemon IPC are
 proprietary, so everything under "The Sony daemons" below stays reverse
 engineered.

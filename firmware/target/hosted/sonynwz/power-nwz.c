@@ -204,9 +204,40 @@ int nwz_power_suspend(void)
     return ret;
 }
 
+#ifdef SONY_NWA30
+/* Sony's own way of turning this player off, from their kernel source:
+ * drivers/power/icx_pm_helper.c gives the icx_pm_helper platform device a
+ * "force_power_off" attribute, and writing 1 to it calls mt_power_off(). The
+ * device registers with id -1, so it has no numeric suffix.
+ *
+ * The attribute is created 0644 and owned by root, so this only works if the
+ * stock init hands it to the "system" user. Trying costs one failed write. */
+#define ICX_FORCE_POWER_OFF "/sys/devices/platform/icx_pm_helper/force_power_off"
+
+static bool nwa30_force_power_off(void)
+{
+    int fd = open(ICX_FORCE_POWER_OFF, O_WRONLY);
+    if(fd < 0)
+    {
+        printf("power off: %s: %s\n", ICX_FORCE_POWER_OFF, strerror(errno));
+        return false;
+    }
+    bool ok = write(fd, "1\n", 2) == 2;
+    if(!ok)
+        printf("power off: writing %s: %s\n", ICX_FORCE_POWER_OFF,
+            strerror(errno));
+    close(fd);
+    return ok;
+}
+#endif
+
 int nwz_power_shutdown(void)
 {
     sync(); /* man page advises to sync to avoid data loss */
+#ifdef SONY_NWA30
+    if(nwa30_force_power_off())
+        sleep(5); /* the machine is going down; do not race it */
+#endif
     int ret = reboot(RB_POWER_OFF);
     /* reboot() needs CAP_SYS_BOOT, which the app that launches us does not grant
      * (it comes back EPERM): the stock firmware powers off by asking a
