@@ -49,9 +49,10 @@ Not working yet:
   tuner answers ENOTTY, so it is left out. Sony's kernel source has enough to
   change that; see "The FM tuner" below.
 - **Real power off and reboot.** `reboot(2)` needs a capability we do not have,
-  so shutdown falls through to suspend and "Reboot" exits to the boot menu. Sony's
-  kernel source offers a way round for power off, tried before the fallback and
-  not yet confirmed to be permitted for us; see the section below.
+  so shutdown falls through to suspend and "Reboot" exits to the boot menu.
+  Sony's own `force_power_off` was the obvious way round and it is **not open to
+  us**: the attribute is 0644 and root's, and the device answers EACCES. The
+  boot-reason flags next to it are world-readable and do work.
 
 ## Sony publishes the source for this player
 
@@ -76,13 +77,15 @@ port spent weeks on:
   `/* TYPE_A is fixed HG */`
 - `0x33` is the mute value for the volume registers, and `0x00` is 0 dB
 
-It also gives a way to turn the player off. `drivers/power/icx_pm_helper.c`
-registers a platform device with a `force_power_off` attribute that calls
-`mt_power_off()`, so `/sys/devices/platform/icx_pm_helper/force_power_off` is
-worth a write before falling back to suspend. The same device publishes why the
-machine last booted, split into flags - `boot_powerkey`, `boot_wdt`,
-`boot_deadbat`, `boot_thermal` and friends - which beats parsing
-`bootreason=` out of the kernel command line.
+It named what looked like a way to turn the player off, and then settled it the
+other way. `drivers/power/icx_pm_helper.c` registers a platform device with a
+`force_power_off` attribute that calls `mt_power_off()` - but the attribute is
+created 0644 and owned by root, and the device duly answers EACCES. It is still
+tried before falling back to suspend, since a failed `open()` costs nothing and
+the log then says plainly which wall we are at. The same device publishes why
+the machine last booted, split into flags - `boot_powerkey`, `boot_wdt`,
+`boot_deadbat`, `boot_thermal` and friends - and those *are* world-readable,
+which beats parsing `bootreason=` out of the kernel command line.
 
 **Several of the drivers this player loads are missing from the release.** Of
 the modules in `/proc/modules`, only the audio codec and the `icx_usb*` headers
